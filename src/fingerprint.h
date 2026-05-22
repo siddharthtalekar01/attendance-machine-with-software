@@ -33,6 +33,9 @@ int fingerprintEnroll(uint16_t id, FingerprintProgressCallback progressCallback 
 /** @return FP_SEARCH_OK, FP_SEARCH_NO_FINGER, or FP_SEARCH_NO_MATCH */
 int fingerprintSearch(uint16_t &matchedId, uint16_t &confidence);
 
+/** Single non-blocking sample — true if a finger is on the sensor now. */
+bool fingerprintFingerPresent();
+
 bool fingerprintDeleteId(uint16_t id);
 bool fingerprintDeleteAll();
 uint16_t fingerprintGetCount();

@@ -11,10 +11,11 @@ struct UserRecord {
     char department[24] = {};
 };
 
-struct AttendanceRecord {
+/** Legacy event log entry (append-only) for records screen / export. */
+struct AttendanceEvent {
     uint8_t fingerId = 0;
     time_t timestamp = 0;
-    bool checkIn = true;  // true = in, false = out
+    bool checkIn = true;
 };
 
 struct LastScanInfo {
@@ -31,7 +32,7 @@ enum class RecordFilter : uint8_t {
 };
 
 struct AttendanceRecordView {
-    AttendanceRecord rec{};
+    AttendanceEvent rec{};
     char name[MAX_NAME_LEN] = {};
     char department[24] = {};
 };
@@ -47,13 +48,16 @@ public:
     bool begin();
     bool loadUsers(JsonDocument &doc);
     bool saveUsers(const JsonDocument &doc);
-    bool appendAttendance(const AttendanceRecord &rec);
+    bool appendAttendance(const AttendanceEvent &rec);
     bool findUserByFingerId(uint8_t fingerId, UserRecord &out);
     bool upsertUser(const UserRecord &user);
     bool getLastScanToday(LastScanInfo &out);
     int loadAttendanceFiltered(RecordFilter filter, time_t dayAnchor,
                                AttendanceRecordView *out, int maxOut,
                                RecordsSummary *summary);
+    bool getUserAttendanceStats(uint8_t fingerId, int &totalDays, char *avgArrival,
+                              size_t avgLen);
+    bool removeUser(uint8_t fingerId);
 
 private:
     bool _mounted = false;

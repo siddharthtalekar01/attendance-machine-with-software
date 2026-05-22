@@ -70,6 +70,13 @@ constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
 constexpr int      NTP_TIMEZONE_OFFSET_SEC = 0;
 constexpr unsigned long NTP_UPDATE_INTERVAL_MS = 600000;
 
+// Application state machine timings (non-blocking; millis() only in loop)
+constexpr uint32_t BOOT_ANIM_MS        = 2000;
+constexpr uint32_t SCAN_RESULT_MS      = 3000;
+constexpr uint32_t ADMIN_HOLD_MS       = 2000;
+constexpr uint32_t SCAN_POLL_MS        = 80;
+constexpr const char *ADMIN_PIN_DEFAULT = "1234";
+
 // Dark dashboard theme
 constexpr uint16_t COLOR_BG_DARK    = 0x0841;
 constexpr uint16_t COLOR_BG         = COLOR_BG_DARK;
@@ -85,6 +92,7 @@ constexpr uint16_t TEXT_PRIMARY    = 0xFFFF;
 constexpr uint16_t TEXT_MUTED      = 0x632C;
 constexpr uint16_t ACCENT_GREEN    = 0x07E0;
 constexpr uint16_t ACCENT_BLUE     = 0x3A6A;
+constexpr uint16_t ACCENT_RED      = COLOR_ERROR;
 constexpr uint16_t STATUS_AMBER    = 0xFD20;
 constexpr uint16_t STATUS_GREEN    = ACCENT_GREEN;
 constexpr uint16_t STATUS_RED      = COLOR_ERROR;

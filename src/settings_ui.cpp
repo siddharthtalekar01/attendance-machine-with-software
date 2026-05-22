@@ -11,6 +11,7 @@
 #include "storage.h"
 #include "wifi_manager.h"
 #include "ui_screens.h"
+#include "users_ui.h"
 
 #if __has_include("secrets.h")
 #include "secrets.h"
@@ -695,38 +696,5 @@ void settingsHandleTouchUp(int x, int y) {
 }
 
 void drawUsersListScreen() {
-    TFT_eSPI &tft = gDisplay.tft();
-    tft.fillScreen(COLOR_BG_DARK);
-    drawBackArrow(tft, 10, 10, TEXT_PRIMARY);
-    tft.setTextFont(2);
-    tft.setTextColor(TEXT_PRIMARY, COLOR_BG_DARK);
-    tft.setTextDatum(TC_DATUM);
-    tft.drawString("All Users", SCREEN_WIDTH / 2, 10);
-    tft.setTextDatum(TL_DATUM);
-
-    JsonDocument doc;
-    if (!gStorage.loadUsers(doc)) {
-        gDisplay.drawCenteredText(160, "No users file", 2, TEXT_MUTED);
-        return;
-    }
-
-    JsonArray users = doc["users"].as<JsonArray>();
-    int y = 40;
-    tft.setTextFont(1);
-    for (JsonObject u : users) {
-        if (y > 280) break;
-        char line[48];
-        snprintf(line, sizeof(line), "%s (ID %u)", u["name"].as<const char *>(),
-                 u["fingerId"].as<uint8_t>());
-        tft.setTextColor(TEXT_PRIMARY, COLOR_BG_DARK);
-        tft.drawString(line, 12, y);
-        const char *dept = u["department"] | "";
-        if (dept[0]) {
-            tft.setTextColor(TEXT_MUTED, COLOR_BG_DARK);
-            tft.drawString(dept, 12, y + 14);
-        }
-        y += 32;
-    }
-
-    gDisplay.drawButton(20, 280, 90, 32, "Back", 0x4208);
+    drawUsersScreen();
 }

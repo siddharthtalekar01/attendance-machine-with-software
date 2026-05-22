@@ -220,6 +220,11 @@ int fingerprintSearch(uint16_t &matchedId, uint16_t &confidence) {
     return FP_SEARCH_OK;
 }
 
+bool fingerprintFingerPresent() {
+    if (!s_initialized) return false;
+    return s_sensor.getImage() == FINGERPRINT_OK;
+}
+
 bool fingerprintDeleteId(uint16_t id) {
     if (!s_initialized || id == 0 || id > MAX_ENROLLED_FINGERS) return false;
     const uint8_t p = s_sensor.deleteModel(id);

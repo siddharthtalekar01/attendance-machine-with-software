@@ -1,12 +1,14 @@
 #pragma once
 
 #include <TFT_eSPI.h>
+#include "app_state.h"
 #include "config.h"
 #include "display.h"
 #include "fingerprint.h"
 #include "attendance.h"
 #include "storage.h"
 #include "wifi_manager.h"
+#include "users_ui.h"
 
 /** Multi-step enrollment UI (step 1–4, progress dots 0–4). */
 void drawEnrollScreen(int step, const char *status, int progress, uint16_t statusColor);
@@ -14,10 +16,22 @@ void drawEnrollScreen(int step, const char *status, int progress, uint16_t statu
 class UiScreens {
     friend void drawEnrollScreen(int step, const char *status, int progress, uint16_t statusColor);
 public:
-    void begin();
+    void enterState(AppState state);
+    void exitState(AppState state);
+    void updateState(AppState state);
+    bool handleTouch(AppState state, const TouchPoint &tp);
+
+    /** @deprecated Use changeState() from main; kept for gradual migration. */
     void setScreen(AppScreen screen);
-    AppScreen currentScreen() const { return _screen; }
-    void loop();
+
+    int enrollWizardStep() const { return _enrollWizardStep; }
+    void enrollCancelPoll() { _enrollPollActive = false; }
+    int homeNavTabAt(int16_t x, int16_t y) const;
+    void drawErrorScreen(const char *title, const char *body);
+    void drawAdminAuthScreen(const char *pinDisplay, bool pinError);
+    bool handleAdminAuthTouch(const TouchPoint &tp, char *pinBuf, int &pinLen, bool &submitted);
+    void drawAdminMenuScreen();
+    bool handleAdminMenuTouch(const TouchPoint &tp);
 
 private:
     AppScreen _screen = AppScreen::Splash;
@@ -67,11 +81,18 @@ private:
     void handleRecordsTouch(const TouchPoint &tp);
     void drawSettings();
     void handleSettingsTouch(const TouchPoint &tp);
+    void handleUsersScreenTouch(const TouchPoint &tp);
+
+    void drawScanResultScreen();
+    void drawWifiSetupScreen();
 
     bool _settingsDragging = false;
     int _settingsLastX = 0;
     int _settingsLastY = 0;
-    bool _onUserList = false;
+
+    bool _usersDragging = false;
+    int _usersLastX = 0;
+    int _usersLastY = 0;
 
     bool _recordsDragging = false;
     int _recordsLastX = 0;
@@ -79,8 +100,9 @@ private:
 
     bool hitButton(int16_t tx, int16_t ty, int16_t x, int16_t y, int16_t w, int16_t h);
     void handleHomeTouch(const TouchPoint &tp);
-    int homeNavTabAt(int16_t x, int16_t y) const;
     static const char *enrollDepartmentName(int idx);
 };
 
 extern UiScreens gUi;
+
+void uiShowErrorScreen(const char *title, const char *body);

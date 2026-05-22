@@ -84,11 +84,81 @@ bool StorageManager::upsertUser(const UserRecord &user) {
         u["fingerId"] = user.fingerId;
         u["name"] = user.name;
         u["department"] = user.department;
+        u["enrollTs"] = now();
     }
     return saveUsers(doc);
 }
 
-bool StorageManager::appendAttendance(const AttendanceRecord &rec) {
+bool StorageManager::getUserAttendanceStats(uint8_t fingerId, int &totalDays,
+                                            char *avgArrival, size_t avgLen) {
+    totalDays = 0;
+    if (avgArrival && avgLen > 0) strlcpy(avgArrival, "--:--", avgLen);
+
+    if (!_mounted || !LittleFS.exists(LOG_FILE) || fingerId == 0) return false;
+
+    File f = LittleFS.open(LOG_FILE, FILE_READ);
+    if (!f) return false;
+
+    JsonDocument doc;
+    if (deserializeJson(doc, f)) {
+        f.close();
+        return false;
+    }
+    f.close();
+
+    if (!doc.is<JsonArray>()) return false;
+
+    bool daysSeen[366] = {};
+    int dayCount = 0;
+    int totalCheckInMin = 0;
+    int checkInCount = 0;
+
+    for (JsonObject entry : doc.as<JsonArray>()) {
+        if ((entry["fingerId"] | 0) != fingerId) continue;
+        const time_t ts = entry["ts"] | 0;
+        if (ts == 0) continue;
+
+        const int d = day(ts);
+        const int m = month(ts);
+        if (d >= 1 && d <= 31 && m >= 1 && m <= 12) {
+            const int key = m * 32 + d;
+            if (!daysSeen[key]) {
+                daysSeen[key] = true;
+                dayCount++;
+            }
+        }
+
+        if (entry["in"] | true) {
+            totalCheckInMin += hour(ts) * 60 + minute(ts);
+            checkInCount++;
+        }
+    }
+
+    totalDays = dayCount;
+    if (avgArrival && avgLen > 0 && checkInCount > 0) {
+        const int avg = totalCheckInMin / checkInCount;
+        snprintf(avgArrival, avgLen, "%02d:%02d", avg / 60, avg % 60);
+    }
+    return true;
+}
+
+bool StorageManager::removeUser(uint8_t fingerId) {
+    if (!_mounted || fingerId == 0) return false;
+
+    JsonDocument doc;
+    if (!loadUsers(doc)) return false;
+
+    JsonArray users = doc["users"].as<JsonArray>();
+    for (size_t i = 0; i < users.size(); i++) {
+        if (users[i]["fingerId"].as<uint8_t>() == fingerId) {
+            users.remove(i);
+            return saveUsers(doc);
+        }
+    }
+    return false;
+}
+
+bool StorageManager::appendAttendance(const AttendanceEvent &rec) {
     if (!_mounted) return false;
 
     JsonDocument doc;

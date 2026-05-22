@@ -1,8 +1,11 @@
 #include "ui_screens.h"
 #include "records_ui.h"
 #include "settings_ui.h"
+#include "users_ui.h"
 #include <TimeLib.h>
 #include <cstring>
+
+#include "app_state.h"
 
 UiScreens gUi;
 
@@ -103,50 +106,128 @@ void drawNavIcon(TFT_eSPI &tft, int16_t cx, int16_t cy, int tab) {
 
 }  // namespace
 
-void UiScreens::begin() {
-    _splashStart = millis();
-    _pulseSpriteReady = false;
-    _lastClockStr[0] = '\0';
-    _lastDateStr[0] = '\0';
-    setScreen(AppScreen::Splash);
+static AppScreen stateToLegacyScreen(AppState state) {
+    switch (state) {
+        case STATE_BOOT: return AppScreen::Splash;
+        case STATE_HOME: return AppScreen::Home;
+        case STATE_SCANNING: return AppScreen::Scan;
+        case STATE_ENROLL_INFO:
+        case STATE_ENROLL_SCAN1:
+        case STATE_ENROLL_SCAN2:
+        case STATE_ENROLL_RESULT:
+            return AppScreen::Enroll;
+        case STATE_RECORDS: return AppScreen::Records;
+        case STATE_SETTINGS: return AppScreen::Settings;
+        case STATE_USERS: return AppScreen::UserList;
+        case STATE_WIFI_SETUP: return AppScreen::WiFiSetup;
+        case STATE_ADMIN_AUTH: return AppScreen::Admin;
+        default: return AppScreen::Home;
+    }
 }
 
 void UiScreens::setScreen(AppScreen screen) {
-    touchQueueClear();
-    _screen = screen;
-
     switch (screen) {
-        case AppScreen::Splash:
+        case AppScreen::Splash: changeState(STATE_BOOT); break;
+        case AppScreen::Home: changeState(STATE_HOME); break;
+        case AppScreen::Scan: changeState(STATE_SCANNING); break;
+        case AppScreen::Enroll: changeState(STATE_ENROLL_INFO); break;
+        case AppScreen::Records: changeState(STATE_RECORDS); break;
+        case AppScreen::Settings: changeState(STATE_SETTINGS); break;
+        case AppScreen::UserList: changeState(STATE_USERS); break;
+        case AppScreen::WiFiSetup: changeState(STATE_WIFI_SETUP); break;
+        case AppScreen::Admin: changeState(STATE_ADMIN_AUTH); break;
+        default: changeState(STATE_HOME); break;
+    }
+}
+
+void UiScreens::enterState(AppState state) {
+    touchQueueClear();
+    _screen = stateToLegacyScreen(state);
+    _splashStart = millis();
+
+    switch (state) {
+        case STATE_BOOT:
             drawSplash();
             break;
-        case AppScreen::Home:
+        case STATE_HOME:
             _activeNavTab = -1;
             drawHomeScreen();
             break;
-        case AppScreen::Scan:
+        case STATE_SCANNING:
             drawScan();
             break;
-        case AppScreen::Enroll:
+        case STATE_SCAN_RESULT:
+            drawScanResultScreen();
+            break;
+        case STATE_ENROLL_INFO:
             _activeNavTab = 0;
             beginEnrollWizard();
+            _enrollWizardStep = 1;
             drawEnroll();
             break;
-        case AppScreen::Records:
+        case STATE_ENROLL_SCAN1:
+            _activeNavTab = 0;
+            _enrollWizardStep = 2;
+            refreshEnrollUi();
+            break;
+        case STATE_ENROLL_SCAN2:
+            _activeNavTab = 0;
+            _enrollWizardStep = 3;
+            refreshEnrollUi();
+            break;
+        case STATE_ENROLL_RESULT:
+            _activeNavTab = 0;
+            _enrollWizardStep = 4;
+            refreshEnrollUi();
+            break;
+        case STATE_RECORDS:
             _activeNavTab = 1;
             drawRecords();
             break;
-        case AppScreen::Settings:
+        case STATE_SETTINGS:
             _activeNavTab = 2;
-            _onUserList = false;
             drawSettings();
             break;
-        case AppScreen::UserList:
-            _onUserList = true;
-            drawUsersListScreen();
+        case STATE_USERS:
+            gUsersUi.scrollY = 0;
+            gUsersUi.velocity = 0;
+            gUsersUi.swipedRow = -1;
+            gUsersUi.popupVisible = false;
+            gUsersUi.kbVisible = false;
+            gUsersUi.searchLen = 0;
+            gUsersUi.searchBuf[0] = '\0';
+            usersReload();
+            drawUsersScreen();
+            break;
+        case STATE_WIFI_SETUP:
+            drawWifiSetupScreen();
+            break;
+        case STATE_ADMIN_AUTH:
+            drawAdminAuthScreen("", false);
+            break;
+        case STATE_ERROR:
             break;
         default:
-            drawHomeScreen();
             break;
+    }
+}
+
+void uiShowErrorScreen(const char *title, const char *body) {
+    gUi.drawErrorScreen(title, body);
+}
+
+void UiScreens::exitState(AppState state) {
+    if (state == STATE_ENROLL_SCAN1 || state == STATE_ENROLL_SCAN2) {
+        _enrollPollActive = false;
+    }
+    if (state == STATE_SETTINGS) {
+        _settingsDragging = false;
+    }
+    if (state == STATE_USERS) {
+        _usersDragging = false;
+    }
+    if (state == STATE_RECORDS) {
+        _recordsDragging = false;
     }
 }
 
@@ -341,14 +422,14 @@ int UiScreens::homeNavTabAt(int16_t x, int16_t y) const {
 
 void UiScreens::handleHomeTouch(const TouchPoint &tp) {
     if (isTouchInRect(tp, 30, HOME_HERO_Y + 10, 180, HOME_HERO_H - 20)) {
-        setScreen(AppScreen::Scan);
+        changeState(STATE_SCANNING);
         return;
     }
 
     const int tab = homeNavTabAt(tp.x, tp.y);
-    if (tab == 0) setScreen(AppScreen::Enroll);
-    else if (tab == 1) setScreen(AppScreen::Records);
-    else if (tab == 2) setScreen(AppScreen::Settings);
+    if (tab == 0) changeState(STATE_ENROLL_INFO);
+    else if (tab == 1) changeState(STATE_RECORDS);
+    // tab 2 (Settings): short/long press handled in main.cpp
 }
 
 void UiScreens::drawScan() {
@@ -356,6 +437,167 @@ void UiScreens::drawScan() {
     gDisplay.drawHeader("Scan");
     gDisplay.drawCenteredText(140, "Place finger on sensor", 2, TEXT_PRIMARY);
     gDisplay.drawButton(20, 260, 90, 40, "Back", 0x4208);
+}
+
+void UiScreens::drawScanResultScreen() {
+    TFT_eSPI &tft = gDisplay.tft();
+    gDisplay.fillScreen(COLOR_BG_DARK);
+    gDisplay.drawHeader("Scan Result");
+
+    const ScanResult &sr = gLastScanResult;
+    uint16_t accent = ACCENT_BLUE;
+    if (sr.type == CHECKIN_OK || sr.type == CHECKOUT_OK) accent = STATUS_GREEN;
+    else if (sr.type == CHECKIN_LATE) accent = STATUS_AMBER;
+    else if (sr.type == SCAN_UNKNOWN || sr.type == ALREADY_OUT) accent = STATUS_RED;
+
+    const int cy = 100;
+    if (sr.type == CHECKIN_OK || sr.type == CHECKIN_LATE || sr.type == CHECKOUT_OK) {
+        drawBigCheck(tft, SCREEN_WIDTH / 2, cy, accent);
+    } else {
+        drawBigX(tft, SCREEN_WIDTH / 2, cy, accent);
+    }
+
+    if (sr.hasUser) {
+        tft.setTextFont(2);
+        tft.setTextColor(TEXT_PRIMARY, COLOR_BG_DARK);
+        tft.setTextDatum(TC_DATUM);
+        tft.drawString(sr.user.name, SCREEN_WIDTH / 2, cy + 36);
+        tft.setTextFont(1);
+        tft.setTextColor(TEXT_SECONDARY, COLOR_BG_DARK);
+        tft.drawString(sr.user.department, SCREEN_WIDTH / 2, cy + 58);
+    }
+
+    tft.setTextFont(2);
+    tft.setTextColor(accent, COLOR_BG_DARK);
+    tft.drawString(scanResultTypeString(sr.type), SCREEN_WIDTH / 2, 200);
+    tft.setTextFont(1);
+    tft.setTextColor(TEXT_MUTED, COLOR_BG_DARK);
+    tft.drawString("Returning home...", SCREEN_WIDTH / 2, 240);
+    tft.setTextDatum(TL_DATUM);
+}
+
+void UiScreens::drawAdminAuthScreen(const char *pinDisplay, bool pinError) {
+    TFT_eSPI &tft = gDisplay.tft();
+    gDisplay.fillScreen(COLOR_BG_DARK);
+    gDisplay.drawHeader("Admin PIN");
+
+    tft.setTextFont(1);
+    tft.setTextColor(TEXT_MUTED, COLOR_BG_DARK);
+    tft.setTextDatum(TC_DATUM);
+    tft.drawString("Hold Settings 2s to open", SCREEN_WIDTH / 2, 40);
+
+    tft.fillRoundRect(40, 58, SCREEN_WIDTH - 80, 32, 6, 0x2104);
+    tft.setTextFont(4);
+    tft.setTextColor(pinError ? STATUS_RED : TEXT_PRIMARY, 0x2104);
+    tft.drawString(pinDisplay && pinDisplay[0] ? pinDisplay : "----", SCREEN_WIDTH / 2, 74);
+
+    if (pinError) {
+        tft.setTextFont(1);
+        tft.setTextColor(STATUS_RED, COLOR_BG_DARK);
+        tft.drawString("Incorrect PIN", SCREEN_WIDTH / 2, 100);
+    }
+
+    const int keyW = 70;
+    const int keyH = 40;
+    const int startX = 15;
+    const int startY = 120;
+    const char *labels[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "OK"};
+    for (int i = 0; i < 12; i++) {
+        const int col = i % 3;
+        const int row = i / 3;
+        const int x = startX + col * (keyW + 8);
+        const int y = startY + row * (keyH + 6);
+        gDisplay.drawButton(x, y, keyW, keyH, labels[i], 0x4208);
+    }
+
+    gDisplay.drawButton(20, 280, 90, 32, "Cancel", 0x4208);
+    tft.setTextDatum(TL_DATUM);
+}
+
+bool UiScreens::handleAdminAuthTouch(const TouchPoint &tp, char *pinBuf, int &pinLen, bool &submitted) {
+    submitted = false;
+    if (isTouchInRect(tp, 20, 280, 90, 32)) {
+        changeState(STATE_HOME);
+        return true;
+    }
+
+    const int keyW = 70;
+    const int keyH = 40;
+    const int startX = 15;
+    const int startY = 120;
+    const char keys[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', 'K'};
+    for (int i = 0; i < 12; i++) {
+        const int col = i % 3;
+        const int row = i / 3;
+        const int x = startX + col * (keyW + 8);
+        const int y = startY + row * (keyH + 6);
+        if (!isTouchInRect(tp, x, y, keyW, keyH)) continue;
+
+        if (keys[i] == 'C') {
+            pinLen = 0;
+            pinBuf[0] = '\0';
+            drawAdminAuthScreen("", false);
+            return true;
+        }
+        if (keys[i] == 'K') {
+            submitted = true;
+            return true;
+        }
+        if (pinLen < 6) {
+            pinBuf[pinLen++] = keys[i];
+            pinBuf[pinLen] = '\0';
+            drawAdminAuthScreen(pinBuf, false);
+        }
+        return true;
+    }
+    return false;
+}
+
+void UiScreens::drawAdminMenuScreen() {
+    gDisplay.fillScreen(COLOR_BG_DARK);
+    gDisplay.drawHeader("Admin");
+    gDisplay.drawCenteredText(50, "Select destination", 1, TEXT_MUTED);
+    gDisplay.drawButton(20, 90, SCREEN_WIDTH - 40, 44, "Settings", ACCENT_BLUE);
+    gDisplay.drawButton(20, 148, SCREEN_WIDTH - 40, 44, "Users", ACCENT_BLUE);
+    gDisplay.drawButton(20, 206, SCREEN_WIDTH - 40, 44, "Records", ACCENT_BLUE);
+    gDisplay.drawButton(20, 280, 90, 32, "Home", 0x4208);
+}
+
+bool UiScreens::handleAdminMenuTouch(const TouchPoint &tp) {
+    if (isTouchInRect(tp, 20, 90, SCREEN_WIDTH - 40, 44)) {
+        gAdminUnlocked = true;
+        changeState(STATE_SETTINGS);
+        return true;
+    }
+    if (isTouchInRect(tp, 20, 148, SCREEN_WIDTH - 40, 44)) {
+        gAdminUnlocked = true;
+        changeState(STATE_USERS);
+        return true;
+    }
+    if (isTouchInRect(tp, 20, 206, SCREEN_WIDTH - 40, 44)) {
+        gAdminUnlocked = true;
+        changeState(STATE_RECORDS);
+        return true;
+    }
+    if (isTouchInRect(tp, 20, 280, 90, 32)) {
+        changeState(STATE_HOME);
+        return true;
+    }
+    return false;
+}
+
+void UiScreens::drawWifiSetupScreen() {
+    gDisplay.fillScreen(COLOR_BG_DARK);
+    gDisplay.drawHeader("WiFi Setup");
+    gDisplay.drawCenteredText(120, "Configure network\nin Settings", 2, TEXT_SECONDARY);
+    gDisplay.drawButton(20, 260, 90, 40, "Back", 0x4208);
+}
+
+void UiScreens::drawErrorScreen(const char *title, const char *body) {
+    gDisplay.fillScreen(COLOR_BG_DARK);
+    gDisplay.drawHeader(title ? title : "Error");
+    gDisplay.drawCenteredText(130, body ? body : "", 2, STATUS_RED);
+    gDisplay.drawButton(20, 260, SCREEN_WIDTH - 40, 40, "Continue", ACCENT_BLUE);
 }
 
 const char *UiScreens::enrollDepartmentName(int idx) {
@@ -543,11 +785,10 @@ void UiScreens::tickEnrollFingerprint() {
 
     if (r == 0) {
         if (_enrollCtx.phase == FpEnrollPhase::WaitFinger2 || _enrollCtx.phase == FpEnrollPhase::Capture2) {
-            if (_enrollWizardStep != 3) {
-                _enrollWizardStep = 3;
-                refreshEnrollUi();
+            if (currentState != STATE_ENROLL_SCAN2) {
+                changeState(STATE_ENROLL_SCAN2);
             }
-        } else if (_enrollWizardStep == 2 || _enrollWizardStep == 3) {
+        } else if (currentState == STATE_ENROLL_SCAN1 || currentState == STATE_ENROLL_SCAN2) {
             _enrollStatusColor = (_enrollCtx.phase == FpEnrollPhase::WaitRemove) ? STATUS_GREEN : STATUS_AMBER;
             updateEnrollPulse();
             TFT_eSPI &tft = gDisplay.tft();
@@ -563,7 +804,6 @@ void UiScreens::tickEnrollFingerprint() {
     }
 
     _enrollPollActive = false;
-    _enrollWizardStep = 4;
     _enrollSuccess = (r == FP_ENROLL_OK);
 
     if (_enrollSuccess) {
@@ -579,7 +819,7 @@ void UiScreens::tickEnrollFingerprint() {
         snprintf(_enrollStatus, sizeof(_enrollStatus), "%s", fingerprintErrorString(r));
         fingerprintDeleteId(_enrollId);
     }
-    refreshEnrollUi();
+    changeState(STATE_ENROLL_RESULT);
 }
 
 void UiScreens::drawEnroll() {
@@ -594,7 +834,7 @@ void UiScreens::drawEnroll() {
 void UiScreens::handleEnrollTouch(const TouchPoint &tp) {
     if (_enrollWizardStep == 1) {
         if (isTouchInRect(tp, 0, 0, 70, 28)) {
-            setScreen(AppScreen::Home);
+            changeState(STATE_HOME);
             return;
         }
         if (isTouchInRect(tp, 20, 108, 36, 24)) {
@@ -639,25 +879,23 @@ void UiScreens::handleEnrollTouch(const TouchPoint &tp) {
             return;
         }
         if (isTouchInRect(tp, 20, 272, SCREEN_WIDTH - 40, 38)) {
-            _enrollWizardStep = 2;
             _enrollStatusColor = STATUS_AMBER;
             _enrollProgress = 0;
             strlcpy(_enrollStatus, "Place finger firmly", sizeof(_enrollStatus));
             fingerprintEnrollBegin(_enrollCtx, _enrollId);
             _enrollPollActive = true;
-            refreshEnrollUi();
+            changeState(STATE_ENROLL_SCAN1);
         }
         return;
     }
 
     if (_enrollWizardStep == 4) {
         if (isTouchInRect(tp, 14, 228, 100, 36)) {
-            beginEnrollWizard();
-            drawEnroll();
+            changeState(STATE_ENROLL_INFO);
             return;
         }
         if (isTouchInRect(tp, 126, 228, 100, 36)) {
-            setScreen(AppScreen::Home);
+            changeState(STATE_HOME);
         }
         return;
     }
@@ -675,7 +913,7 @@ void UiScreens::drawRecords() {
 void UiScreens::handleRecordsTouch(const TouchPoint &tp) {
     if (recordsHandleChromeTap(tp.x, tp.y)) {
         if (isTouchInRect(tp, 0, 0, 40, REC_HEADER_H)) {
-            setScreen(AppScreen::Home);
+            changeState(STATE_HOME);
         }
         return;
     }
@@ -694,15 +932,18 @@ void UiScreens::drawSettings() {
     drawSettingsScreen();
 }
 
-void UiScreens::handleSettingsTouch(const TouchPoint &tp) {
-    if (_onUserList) {
-        if (isTouchInRect(tp, 0, 0, 44, 36) || isTouchInRect(tp, 20, 280, 90, 32)) {
-            _onUserList = false;
-            setScreen(AppScreen::Settings);
-        }
-        return;
-    }
+void UiScreens::handleUsersScreenTouch(const TouchPoint &tp) {
+    if (handleUserListTouch(tp)) return;
 
+    if (isTouchInRect(tp, 0, USR_LIST_Y, SCREEN_WIDTH, USR_LIST_H)) {
+        usersHandleTouchDown(tp.x, tp.y);
+        _usersDragging = true;
+        _usersLastX = tp.x;
+        _usersLastY = tp.y;
+    }
+}
+
+void UiScreens::handleSettingsTouch(const TouchPoint &tp) {
     if (gSettingsUi.dialog != SettingsUiState::Dialog::None) {
         settingsHandleDialogTap(tp.x, tp.y);
         return;
@@ -710,7 +951,7 @@ void UiScreens::handleSettingsTouch(const TouchPoint &tp) {
 
     if (settingsHandleTap(tp.x, tp.y)) {
         if (isTouchInRect(tp, 0, 0, 44, SETTINGS_HEADER_H)) {
-            setScreen(AppScreen::Home);
+            changeState(STATE_HOME);
         }
         return;
     }
@@ -723,15 +964,8 @@ void UiScreens::handleSettingsTouch(const TouchPoint &tp) {
     }
 }
 
-void UiScreens::loop() {
-    touchUpdate();
-
-    if (_screen == AppScreen::Splash) {
-        if (millis() - _splashStart > 2000) setScreen(AppScreen::Home);
-        return;
-    }
-
-    if (_screen == AppScreen::Home) {
+void UiScreens::updateState(AppState state) {
+    if (state == STATE_HOME) {
         if (millis() - _lastClockMs >= HOME_CLOCK_MS) {
             _lastClockMs = millis();
             updateHomeClock();
@@ -739,15 +973,30 @@ void UiScreens::loop() {
         updateHomePulse();
     }
 
-    if (_screen == AppScreen::Enroll) {
+    if (state == STATE_ENROLL_SCAN1 || state == STATE_ENROLL_SCAN2) {
         tickEnrollFingerprint();
-        if (_enrollWizardStep == 2 || _enrollWizardStep == 3) {
-            updateEnrollPulse();
+        updateEnrollPulse();
+    }
+
+    if (state == STATE_USERS && !gUsersUi.popupVisible) {
+        usersTickInertia();
+        TouchPoint held;
+        if (touchReadHeld(held)) {
+            if (_usersDragging) {
+                usersHandleTouchMove(held.x, held.y);
+            } else if (isTouchInRect(held, 0, USR_LIST_Y, SCREEN_WIDTH, USR_LIST_H)) {
+                usersHandleTouchDown(held.x, held.y);
+                _usersDragging = true;
+            }
+            _usersLastX = held.x;
+            _usersLastY = held.y;
+        } else if (_usersDragging) {
+            usersHandleTouchUp(_usersLastX, _usersLastY);
+            _usersDragging = false;
         }
     }
 
-    if (_screen == AppScreen::Settings && !_onUserList &&
-        gSettingsUi.dialog == SettingsUiState::Dialog::None) {
+    if (state == STATE_SETTINGS && gSettingsUi.dialog == SettingsUiState::Dialog::None) {
         settingsTickInertia();
         TouchPoint held;
         if (touchReadHeld(held)) {
@@ -765,9 +1014,8 @@ void UiScreens::loop() {
         }
     }
 
-    if (_screen == AppScreen::Records) {
+    if (state == STATE_RECORDS) {
         recordsTickInertia();
-
         TouchPoint held;
         if (touchReadHeld(held)) {
             if (_recordsDragging) {
@@ -783,52 +1031,48 @@ void UiScreens::loop() {
             _recordsDragging = false;
         }
     }
+}
 
-    TouchPoint tp;
-    while (touchEventPop(tp)) {
-        if (!tp.pressed) continue;
+bool UiScreens::handleTouch(AppState state, const TouchPoint &tp) {
+    if (!tp.pressed) return false;
 
-        if (_screen == AppScreen::Home) {
+    switch (state) {
+        case STATE_HOME:
             handleHomeTouch(tp);
-            continue;
-        }
-
-        if (_screen == AppScreen::Enroll) {
-            if (isTouchInRect(tp, 0, 0, 70, 28) && _enrollWizardStep != 1) {
-                setScreen(AppScreen::Home);
-                _enrollPollActive = false;
-                continue;
+            return true;
+        case STATE_ENROLL_INFO:
+        case STATE_ENROLL_SCAN1:
+        case STATE_ENROLL_SCAN2:
+        case STATE_ENROLL_RESULT:
+            if (isTouchInRect(tp, 0, 0, 70, 28) && state != STATE_ENROLL_INFO) {
+                enrollCancelPoll();
+                changeState(STATE_HOME);
+                return true;
             }
             handleEnrollTouch(tp);
-            continue;
-        }
-
-        if (_screen == AppScreen::Settings || _screen == AppScreen::UserList) {
+            return true;
+        case STATE_SETTINGS:
             handleSettingsTouch(tp);
-            continue;
-        }
-
-        if (_screen == AppScreen::Records) {
+            return true;
+        case STATE_USERS:
+            handleUsersScreenTouch(tp);
+            return true;
+        case STATE_RECORDS:
             handleRecordsTouch(tp);
-            continue;
-        }
-
-        if (isTouchInRect(tp, 20, 260, 90, 40)) {
-            setScreen(AppScreen::Home);
-            continue;
-        }
-
-        if (_screen == AppScreen::Scan) {
-            ScanOutcome result = gAttendance.processScan();
-            if (result.success) {
-                char msg[64];
-                snprintf(msg, sizeof(msg), "%s\n%s", result.userName, result.message);
-                gDisplay.showMessage("Success", msg, COLOR_SUCCESS);
-            } else {
-                gDisplay.showMessage("Scan", result.message, COLOR_ERROR);
+            return true;
+        case STATE_SCANNING:
+            if (isTouchInRect(tp, 20, 260, 90, 40)) {
+                changeState(STATE_HOME);
+                return true;
             }
-            delay(1500);
-            setScreen(AppScreen::Home);
-        }
+            return true;
+        case STATE_WIFI_SETUP:
+            if (isTouchInRect(tp, 20, 260, 90, 40)) {
+                changeState(STATE_SETTINGS);
+                return true;
+            }
+            return true;
+        default:
+            return false;
     }
 }
