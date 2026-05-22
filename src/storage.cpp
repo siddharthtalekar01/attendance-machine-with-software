@@ -55,6 +55,7 @@ bool StorageManager::findUserByFingerId(uint8_t fingerId, UserRecord &out) {
         if (u["fingerId"].as<uint8_t>() == fingerId) {
             out.fingerId = fingerId;
             strlcpy(out.name, u["name"] | "", sizeof(out.name));
+            strlcpy(out.department, u["department"] | "", sizeof(out.department));
             return true;
         }
     }
@@ -73,6 +74,7 @@ bool StorageManager::upsertUser(const UserRecord &user) {
     for (JsonObject u : users) {
         if (u["fingerId"].as<uint8_t>() == user.fingerId) {
             u["name"] = user.name;
+            u["department"] = user.department;
             found = true;
             break;
         }
@@ -81,6 +83,7 @@ bool StorageManager::upsertUser(const UserRecord &user) {
         JsonObject u = users.add<JsonObject>();
         u["fingerId"] = user.fingerId;
         u["name"] = user.name;
+        u["department"] = user.department;
     }
     return saveUsers(doc);
 }
@@ -157,4 +160,90 @@ bool StorageManager::getLastScanToday(LastScanInfo &out) {
     out.checkIn = bestIn;
     out.found = true;
     return true;
+}
+
+static time_t startOfDay(time_t t) {
+    if (timeStatus() == timeNotSet) return t;
+    tmElements_t te;
+    breakTime(t, te);
+    te.Hour = 0;
+    te.Minute = 0;
+    te.Second = 0;
+    return makeTime(te);
+}
+
+static bool inFilterRange(time_t ts, RecordFilter filter, time_t dayAnchor) {
+    if (ts == 0) return false;
+    if (filter == RecordFilter::All) return true;
+
+    const time_t dayStart = startOfDay(dayAnchor);
+    const time_t dayEnd = dayStart + 86400;
+
+    if (filter == RecordFilter::Today) {
+        return ts >= dayStart && ts < dayEnd;
+    }
+
+    const time_t weekStart = dayStart - 6 * 86400;
+    return ts >= weekStart && ts < dayEnd;
+}
+
+int StorageManager::loadAttendanceFiltered(RecordFilter filter, time_t dayAnchor,
+                                          AttendanceRecordView *out, int maxOut,
+                                          RecordsSummary *summary) {
+    if (!out || maxOut <= 0) return 0;
+    if (summary) *summary = RecordsSummary{};
+
+    if (!_mounted || !LittleFS.exists(LOG_FILE)) return 0;
+
+    File f = LittleFS.open(LOG_FILE, FILE_READ);
+    if (!f) return 0;
+
+    JsonDocument doc;
+    if (deserializeJson(doc, f)) {
+        f.close();
+        return 0;
+    }
+    f.close();
+
+    if (!doc.is<JsonArray>()) return 0;
+
+    int count = 0;
+    for (JsonObject entry : doc.as<JsonArray>()) {
+        AttendanceRecordView view{};
+        view.rec.fingerId = entry["fingerId"] | 0;
+        view.rec.timestamp = entry["ts"] | 0;
+        view.rec.checkIn = entry["in"] | true;
+
+        if (!inFilterRange(view.rec.timestamp, filter, dayAnchor)) continue;
+
+        UserRecord user;
+        if (findUserByFingerId(view.rec.fingerId, user)) {
+            strlcpy(view.name, user.name, sizeof(view.name));
+            strlcpy(view.department, user.department, sizeof(view.department));
+        } else {
+            snprintf(view.name, sizeof(view.name), "ID %u", view.rec.fingerId);
+            strlcpy(view.department, "Unknown", sizeof(view.department));
+        }
+
+        if (count < maxOut) {
+            out[count++] = view;
+        }
+        if (summary) {
+            summary->total++;
+            if (view.rec.checkIn) summary->checkIns++;
+            else summary->checkOuts++;
+        }
+    }
+
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (out[j].rec.timestamp > out[i].rec.timestamp) {
+                const AttendanceRecordView tmp = out[i];
+                out[i] = out[j];
+                out[j] = tmp;
+            }
+        }
+    }
+
+    return count;
 }

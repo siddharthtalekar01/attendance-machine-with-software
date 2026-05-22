@@ -76,6 +76,17 @@ TouchPoint getTouchPoint() {
     return sampleTouchDebounced();
 }
 
+bool touchReadHeld(TouchPoint &tp) {
+    uint16_t rawX = 0;
+    uint16_t rawY = 0;
+    if (!readRawTouch(rawX, rawY)) {
+        tp = {};
+        return false;
+    }
+    tp = mapRawToScreen(rawX, rawY, true);
+    return tp.pressed;
+}
+
 bool isTouchInRect(TouchPoint tp, int x, int y, int w, int h) {
     if (!tp.pressed) return false;
     return tp.x >= x && tp.x < x + w && tp.y >= y && tp.y < y + h;

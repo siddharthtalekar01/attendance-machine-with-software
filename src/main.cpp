@@ -6,6 +6,7 @@
 #include "attendance.h"
 #include "ui_screens.h"
 #include "wifi_manager.h"
+#include "settings_ui.h"
 
 // Copy secrets.example.h to secrets.h and set WiFi credentials
 #if __has_include("secrets.h")
@@ -42,6 +43,7 @@ void setup() {
         delay(3000);
     } else {
         touchLoadCalibration();
+        settingsLoad(gSettingsUi.settings);
     }
 
     if (!fingerprintInit()) {

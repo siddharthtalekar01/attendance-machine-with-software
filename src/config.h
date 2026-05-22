@@ -85,6 +85,18 @@ constexpr uint16_t TEXT_PRIMARY    = 0xFFFF;
 constexpr uint16_t TEXT_MUTED      = 0x632C;
 constexpr uint16_t ACCENT_GREEN    = 0x07E0;
 constexpr uint16_t ACCENT_BLUE     = 0x3A6A;
+constexpr uint16_t STATUS_AMBER    = 0xFD20;
+constexpr uint16_t STATUS_GREEN    = ACCENT_GREEN;
+constexpr uint16_t STATUS_RED      = COLOR_ERROR;
+
+// Kiosk enrollment: fixed display name (tap name field to cycle presets if disabled)
+#ifndef ENROLL_KIOSK_MODE
+#define ENROLL_KIOSK_MODE 1
+#endif
+#ifndef KIOSK_DEFAULT_NAME
+#define KIOSK_DEFAULT_NAME "Kiosk User"
+#endif
+constexpr int ENROLL_DEPT_COUNT = 5;
 
 constexpr int HOME_TOP_H      = 24;
 constexpr int HOME_HERO_Y     = 24;
@@ -96,6 +108,18 @@ constexpr int HOME_NAV_H      = 90;
 constexpr int HOME_PULSE_MS   = 50;
 constexpr int HOME_CLOCK_MS   = 1000;
 
+// Records screen layout
+constexpr int REC_HEADER_H     = 45;
+constexpr int REC_FILTER_Y     = 45;
+constexpr int REC_FILTER_H     = 25;
+constexpr int REC_LIST_Y       = 70;
+constexpr int REC_LIST_H       = 220;
+constexpr int REC_BOTTOM_Y     = 290;
+constexpr int REC_ROW_H        = 44;
+constexpr int REC_ROW_EXPANDED = 40;
+constexpr int REC_VISIBLE_ROWS = 5;
+constexpr int REC_MAX_ITEMS    = 100;
+
 enum class AppScreen : uint8_t {
     Splash,
     Home,
@@ -104,5 +128,6 @@ enum class AppScreen : uint8_t {
     Records,
     Admin,
     Settings,
+    UserList,
     WiFiSetup,
 };

@@ -36,6 +36,8 @@ struct TouchCalibration {
 constexpr int TOUCH_QUEUE_DEPTH = 4;
 
 TouchPoint getTouchPoint();
+/** Current finger position while held (for drag/scroll; not debounced). */
+bool touchReadHeld(TouchPoint &tp);
 bool isTouchInRect(TouchPoint tp, int x, int y, int w, int h);
 
 /** Sample touch and push press-edge events into the global queue. Call every loop. */

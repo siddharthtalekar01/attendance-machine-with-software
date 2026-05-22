@@ -254,6 +254,178 @@ bool fingerprintIdExists(uint16_t id) {
     return p == FINGERPRINT_OK;
 }
 
+uint16_t fingerprintGetNextAvailableId() {
+    for (uint16_t id = 1; id <= MAX_ENROLLED_FINGERS; id++) {
+        if (!fingerprintIdExists(id)) return id;
+    }
+    return 1;
+}
+
+void fingerprintEnrollBegin(FingerprintEnrollContext &ctx, uint16_t id) {
+    ctx.templateId = id;
+    ctx.phase = FpEnrollPhase::WaitFinger1;
+    ctx.phaseStartMs = millis();
+    ctx.lastError = 0;
+}
+
+static void enrollSetPhase(FingerprintEnrollContext &ctx, FpEnrollPhase phase) {
+    ctx.phase = phase;
+    ctx.phaseStartMs = millis();
+}
+
+int fingerprintEnrollPoll(FingerprintEnrollContext &ctx) {
+    if (!s_initialized) {
+        ctx.lastError = FP_ENROLL_ERR_NOT_INIT;
+        ctx.phase = FpEnrollPhase::Failed;
+        return FP_ENROLL_ERR_NOT_INIT;
+    }
+    if (ctx.phase == FpEnrollPhase::Done) return FP_ENROLL_OK;
+    if (ctx.phase == FpEnrollPhase::Failed) return ctx.lastError;
+
+    switch (ctx.phase) {
+        case FpEnrollPhase::WaitFinger1: {
+            const uint8_t p = s_sensor.getImage();
+            if (p == FINGERPRINT_OK) {
+                enrollSetPhase(ctx, FpEnrollPhase::Capture1);
+                break;
+            }
+            if (p != FINGERPRINT_NOFINGER && p != FINGERPRINT_OK) {
+                ctx.lastError = mapCommError(p);
+                ctx.phase = FpEnrollPhase::Failed;
+                return ctx.lastError;
+            }
+            if (timedOut(ctx.phaseStartMs, FP_FINGER_PRESENT_TIMEOUT_MS)) {
+                ctx.lastError = FP_ENROLL_ERR_NO_FINGER;
+                ctx.phase = FpEnrollPhase::Failed;
+                return ctx.lastError;
+            }
+            break;
+        }
+        case FpEnrollPhase::Capture1: {
+            const int err = captureImageOnce();
+            if (err != FP_ENROLL_OK) {
+                ctx.lastError = err;
+                ctx.phase = FpEnrollPhase::Failed;
+                return err;
+            }
+            const uint8_t p = s_sensor.image2Tz(1);
+            if (p != FINGERPRINT_OK) {
+                ctx.lastError = mapCommError(p);
+                ctx.phase = FpEnrollPhase::Failed;
+                return ctx.lastError;
+            }
+            enrollSetPhase(ctx, FpEnrollPhase::WaitRemove);
+            break;
+        }
+        case FpEnrollPhase::WaitRemove: {
+            if (s_sensor.getImage() == FINGERPRINT_NOFINGER) {
+                enrollSetPhase(ctx, FpEnrollPhase::WaitFinger2);
+                break;
+            }
+            if (timedOut(ctx.phaseStartMs, FP_FINGER_REMOVE_TIMEOUT_MS)) {
+                ctx.lastError = FP_ENROLL_ERR_REMOVE;
+                ctx.phase = FpEnrollPhase::Failed;
+                return ctx.lastError;
+            }
+            break;
+        }
+        case FpEnrollPhase::WaitFinger2: {
+            const uint8_t p = s_sensor.getImage();
+            if (p == FINGERPRINT_OK) {
+                enrollSetPhase(ctx, FpEnrollPhase::Capture2);
+                break;
+            }
+            if (p != FINGERPRINT_NOFINGER && p != FINGERPRINT_OK) {
+                ctx.lastError = mapCommError(p);
+                ctx.phase = FpEnrollPhase::Failed;
+                return ctx.lastError;
+            }
+            if (timedOut(ctx.phaseStartMs, FP_FINGER_PRESENT_TIMEOUT_MS)) {
+                ctx.lastError = FP_ENROLL_ERR_NO_FINGER;
+                ctx.phase = FpEnrollPhase::Failed;
+                return ctx.lastError;
+            }
+            break;
+        }
+        case FpEnrollPhase::Capture2: {
+            const int err = captureImageOnce();
+            if (err != FP_ENROLL_OK) {
+                ctx.lastError = err;
+                ctx.phase = FpEnrollPhase::Failed;
+                return err;
+            }
+            const uint8_t p = s_sensor.image2Tz(2);
+            if (p != FINGERPRINT_OK) {
+                ctx.lastError = mapCommError(p);
+                ctx.phase = FpEnrollPhase::Failed;
+                return ctx.lastError;
+            }
+            enrollSetPhase(ctx, FpEnrollPhase::MergeStore);
+            break;
+        }
+        case FpEnrollPhase::MergeStore: {
+            uint8_t p = s_sensor.createModel();
+            if (p == FINGERPRINT_ENROLLMISMATCH) {
+                ctx.lastError = FP_ENROLL_ERR_CREATE;
+                ctx.phase = FpEnrollPhase::Failed;
+                return ctx.lastError;
+            }
+            if (p != FINGERPRINT_OK) {
+                ctx.lastError = FP_ENROLL_ERR_CREATE;
+                ctx.phase = FpEnrollPhase::Failed;
+                return ctx.lastError;
+            }
+            p = s_sensor.storeModel(ctx.templateId);
+            if (p != FINGERPRINT_OK) {
+                ctx.lastError = FP_ENROLL_ERR_STORE;
+                ctx.phase = FpEnrollPhase::Failed;
+                return ctx.lastError;
+            }
+            ctx.phase = FpEnrollPhase::Done;
+            Serial.printf("[FP] Enrolled template ID %u\n", ctx.templateId);
+            return FP_ENROLL_OK;
+        }
+        default:
+            break;
+    }
+    return 0;
+}
+
+const char *fingerprintEnrollPhaseText(const FingerprintEnrollContext &ctx) {
+    switch (ctx.phase) {
+        case FpEnrollPhase::WaitFinger1:
+            return "Place finger firmly";
+        case FpEnrollPhase::Capture1:
+            return "Hold still...";
+        case FpEnrollPhase::WaitRemove:
+            return "Good — remove finger";
+        case FpEnrollPhase::WaitFinger2:
+        case FpEnrollPhase::Capture2:
+            return "Place the same finger again";
+        case FpEnrollPhase::MergeStore:
+            return "Saving template...";
+        case FpEnrollPhase::Done:
+            return "Enrollment complete";
+        case FpEnrollPhase::Failed:
+            return fingerprintErrorString(ctx.lastError);
+        default:
+            return "Ready";
+    }
+}
+
+int fingerprintEnrollDotProgress(const FingerprintEnrollContext &ctx) {
+    switch (ctx.phase) {
+        case FpEnrollPhase::WaitFinger1: return 1;
+        case FpEnrollPhase::Capture1: return 2;
+        case FpEnrollPhase::WaitRemove: return 2;
+        case FpEnrollPhase::WaitFinger2: return 3;
+        case FpEnrollPhase::Capture2: return 3;
+        case FpEnrollPhase::MergeStore: return 4;
+        case FpEnrollPhase::Done: return 4;
+        default: return 0;
+    }
+}
+
 const char *fingerprintErrorString(int code) {
     switch (code) {
         case FP_SEARCH_OK:
