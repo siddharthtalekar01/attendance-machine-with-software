@@ -10,27 +10,28 @@ void AttendanceManager::begin() {
 
 ScanOutcome AttendanceManager::processScan() {
     ScanOutcome out;
-    uint8_t slot = 0;
+    uint16_t slot = 0;
     uint16_t conf = 0;
 
-    const FpResult fp = gFingerprint.identify(slot, conf);
-    if (fp != FpResult::Ok) {
-        out.message = gFingerprint.resultString(fp);
+    const int fp = fingerprintSearch(slot, conf);
+    if (fp != FP_SEARCH_OK) {
+        out.message = fingerprintErrorString(fp);
         return out;
     }
 
     UserRecord user;
-    if (!gStorage.findUserByFingerId(slot, user)) {
+    if (!gStorage.findUserByFingerId(static_cast<uint8_t>(slot), user)) {
         out.message = "Finger not registered";
-        out.fingerId = slot;
+        out.fingerId = static_cast<uint8_t>(slot);
         return out;
     }
 
-    out.checkIn = !_lastWasCheckIn[slot];
-    _lastWasCheckIn[slot] = out.checkIn;
+    const uint8_t fingerSlot = static_cast<uint8_t>(slot);
+    out.checkIn = !_lastWasCheckIn[fingerSlot];
+    _lastWasCheckIn[fingerSlot] = out.checkIn;
 
     AttendanceRecord rec;
-    rec.fingerId = slot;
+    rec.fingerId = fingerSlot;
     rec.timestamp = now();
     rec.checkIn = out.checkIn;
 
@@ -40,7 +41,7 @@ ScanOutcome AttendanceManager::processScan() {
     }
 
     out.success = true;
-    out.fingerId = slot;
+    out.fingerId = fingerSlot;
     strlcpy(out.userName, user.name, sizeof(out.userName));
     out.message = out.checkIn ? "Checked in" : "Checked out";
     return out;

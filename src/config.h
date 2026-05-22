@@ -31,12 +31,24 @@ constexpr int PIN_TOUCH_DIN  = 13;
 constexpr int PIN_TOUCH_DO   = 14;
 constexpr int PIN_TOUCH_IRQ  = 15;  // Active LOW when pressed
 
-#define SPI_TOUCH_FREQUENCY 2500000
+#define SPI_TOUCH_FREQUENCY  2500000
+#define TOUCH_RAW_THRESHOLD  400
+#define TOUCH_CAL_FILE       "/config/touch_cal.json"
+#define TOUCH_CAL_DIR        "/config"
 
-// R307S fingerprint — UART2
-constexpr int PIN_FP_RX = 16;
-constexpr int PIN_FP_TX = 17;
+// R307S fingerprint — UART2 (Serial2)
+constexpr int PIN_FP_RX = 16;  // ESP32 RX2 <- sensor TX
+constexpr int PIN_FP_TX = 17;  // ESP32 TX2 -> sensor RX
 constexpr uint32_t FP_BAUD = 57600;
+
+// Fingerprint timeouts & retries (non-blocking polling)
+#define FP_MAX_RETRIES              3
+#define FP_POLL_INTERVAL_MS         50
+#define FP_UART_BEGIN_DELAY_MS      150
+#define FP_FINGER_PRESENT_TIMEOUT_MS  8000
+#define FP_FINGER_REMOVE_TIMEOUT_MS   6000
+#define FP_IMAGE_CAPTURE_TIMEOUT_MS   3000
+#define FP_SEARCH_POLL_TIMEOUT_MS     5000
 
 // Spare header GPIO (avoid 15 — used by touch IRQ)
 constexpr int PIN_HEADER_IO18 = 18;

@@ -40,14 +40,16 @@ void setup() {
         Serial.println("LittleFS init failed");
         gDisplay.showMessage("Storage", "LittleFS mount failed", COLOR_ERROR);
         delay(3000);
+    } else {
+        touchLoadCalibration();
     }
 
-    if (!gFingerprint.begin()) {
+    if (!fingerprintInit()) {
         Serial.println("Fingerprint sensor not found on UART2");
         gDisplay.showMessage("Sensor", "R307S not detected\nCheck wiring 16/17", COLOR_ERROR);
         delay(2500);
     } else {
-        Serial.printf("Fingerprint templates: %u\n", gFingerprint.templateCount());
+        Serial.printf("Fingerprint templates: %u\n", fingerprintGetCount());
     }
 
     gAttendance.begin();

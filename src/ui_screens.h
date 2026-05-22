@@ -26,7 +26,7 @@ private:
     void drawSettings();
 
     bool hitButton(int16_t tx, int16_t ty, int16_t x, int16_t y, int16_t w, int16_t h);
-    void handleHomeTouch(int16_t x, int16_t y);
+    void handleHomeTouch(const TouchPoint &tp);
 };
 
 extern UiScreens gUi;
