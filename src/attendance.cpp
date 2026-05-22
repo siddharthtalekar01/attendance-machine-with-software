@@ -104,7 +104,8 @@ bool isLate(time_t checkInTime) {
 
     const time_t day0 = dayStart(checkInTime);
     const int checkInMin = (int)((checkInTime - day0) / 60);
-    const int deadline = s_settings.workStartMin + s_settings.lateThresholdMin;
+    const int workStart = s_settings.workStartHour * 60 + s_settings.workStartMinute;
+    const int deadline = workStart + s_settings.lateThresholdMinutes;
     return checkInMin > deadline;
 }
 

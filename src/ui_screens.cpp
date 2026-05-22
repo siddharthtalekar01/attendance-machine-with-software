@@ -8,6 +8,7 @@
 #include "admin_auth.h"
 #include "app_state.h"
 #include "storage.h"
+#include "wifi_setup_ui.h"
 
 UiScreens gUi;
 
@@ -33,15 +34,8 @@ uint16_t blend565(uint16_t fg, uint16_t bg, float t) {
 }
 
 void drawWifiIcon(TFT_eSPI &tft, int16_t x, int16_t y, bool connected, uint16_t color) {
-    if (!connected) {
-        tft.drawLine(x, y + 8, x + 14, y, color);
-        tft.drawLine(x + 14, y, x + 28, y + 8, color);
-        return;
-    }
-    tft.fillCircle(x + 14, y + 10, 2, color);
-    tft.drawArc(x + 14, y + 10, 12, 10, 130, 230, color, COLOR_BG_DARK, false);
-    tft.drawArc(x + 14, y + 10, 8, 6, 130, 230, color, COLOR_BG_DARK, false);
-    tft.drawArc(x + 14, y + 10, 4, 2, 130, 230, color, COLOR_BG_DARK, false);
+    (void)connected;
+    drawWifiStatusIcon(tft, x, y, color);
 }
 
 void drawFingerprintIcon(TFT_eSPI &tft, int16_t cx, int16_t cy) {
@@ -219,6 +213,7 @@ void UiScreens::enterState(AppState state) {
             drawUsersScreen();
             break;
         case STATE_WIFI_SETUP:
+            wifiSetupEnter();
             drawWifiSetupScreen();
             break;
         case STATE_ADMIN_AUTH:
@@ -247,6 +242,9 @@ void UiScreens::exitState(AppState state) {
     }
     if (state == STATE_RECORDS) {
         _recordsDragging = false;
+    }
+    if (state == STATE_WIFI_SETUP) {
+        wifiSetupExit();
     }
 }
 
@@ -448,8 +446,8 @@ void UiScreens::updateHomeBootCard() {
 void UiScreens::updateHomeClock() {
     if (_screen != AppScreen::Home) return;
 
-    const String hhmm = gWiFi.formattedTimeHHMM();
-    const String dateStr = gWiFi.formattedDate();
+    const String hhmm = formatTime(getCurrentTime()).substring(0, 5);
+    const String dateStr = formatShortDate(getCurrentTime());
 
     if (hhmm.equals(_lastClockStr) && dateStr.equals(_lastDateStr)) return;
 
@@ -466,7 +464,7 @@ void UiScreens::updateHomeClock() {
     tft.setTextDatum(ML_DATUM);
     tft.drawString(_lastClockStr, 6, HOME_TOP_H / 2);
 
-    drawWifiIcon(tft, SCREEN_WIDTH - 118, 4, gWiFi.isConnected(), TEXT_SECONDARY);
+    drawWifiStatusIcon(tft, SCREEN_WIDTH - 118, 4, TEXT_SECONDARY);
 
     tft.setTextFont(1);
     tft.setTextSize(1);
@@ -571,10 +569,7 @@ void UiScreens::drawScanResultScreen() {
 }
 
 void UiScreens::drawWifiSetupScreen() {
-    gDisplay.fillScreen(COLOR_BG_DARK);
-    gDisplay.drawHeader("WiFi Setup");
-    gDisplay.drawCenteredText(120, "Configure network\nin Settings", 2, TEXT_SECONDARY);
-    gDisplay.drawButton(20, 260, 90, 40, "Back", 0x4208);
+    wifiSetupDraw();
 }
 
 void UiScreens::drawErrorScreen(const char *title, const char *body) {
@@ -1018,6 +1013,36 @@ void UiScreens::updateState(AppState state) {
             _recordsDragging = false;
         }
     }
+
+    if (state == STATE_WIFI_SETUP) {
+        wifiSetupUpdate();
+        TouchPoint held;
+        if (touchReadHeld(held)) {
+            if (_wifiDragging) {
+                wifiSetupHandleTouchMove(held.x, held.y);
+            } else if (isTouchInRect(held, 0, 84, SCREEN_WIDTH, SCREEN_HEIGHT - 84)) {
+                wifiSetupHandleTouchDown(held.x, held.y);
+                _wifiDragging = true;
+            }
+            _wifiLastX = held.x;
+            _wifiLastY = held.y;
+        } else if (_wifiDragging) {
+            wifiSetupHandleTouchUp(_wifiLastX, _wifiLastY);
+            _wifiDragging = false;
+        }
+    }
+}
+
+void UiScreens::handleWifiSetupTouch(const TouchPoint &tp) {
+    constexpr int WIFI_LIST_Y = 84;
+    if (tp.y < WIFI_LIST_Y) {
+        wifiSetupHandleTouch(tp);
+        return;
+    }
+    wifiSetupHandleTouchDown(tp.x, tp.y);
+    _wifiDragging = true;
+    _wifiLastX = tp.x;
+    _wifiLastY = tp.y;
 }
 
 bool UiScreens::handleTouch(AppState state, const TouchPoint &tp) {
@@ -1054,10 +1079,7 @@ bool UiScreens::handleTouch(AppState state, const TouchPoint &tp) {
             }
             return true;
         case STATE_WIFI_SETUP:
-            if (isTouchInRect(tp, 20, 260, 90, 40)) {
-                adminRequestAccess(STATE_SETTINGS);
-                return true;
-            }
+            handleWifiSetupTouch(tp);
             return true;
         default:
             return false;

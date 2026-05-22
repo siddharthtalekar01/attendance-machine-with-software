@@ -13,16 +13,31 @@
 // -----------------------------------------------------------------------------
 
 struct AppConfig {
-    char deviceName[32] = "Attendance";
-    bool autoNtp = true;
-    bool wifiEnabled = true;
-    char ssid[32] = {};
+    char deviceName[32] = "Attendance Terminal 1";
+    char wifiSSID[64] = {};
     char wifiPassword[64] = {};
-    int workStartMin = 9 * 60;
-    int workEndMin = 18 * 60;
-    int lateThresholdMin = 15;
-    bool checkInAutoToggle = true;
+    bool wifiEnabled = true;
+    bool ntpEnabled = true;
+    char ntpServer[64] = "pool.ntp.org";
+    int timezone = 0;              // UTC offset in minutes (e.g. 330 = IST)
+    int workStartHour = 9;
+    int workStartMinute = 0;
+    int workEndHour = 18;
+    int workEndMinute = 0;
+    int lateThresholdMinutes = 15;
+    int attendanceMode = 1;        // 0 = Manual IN/OUT, 1 = Auto Toggle
+    int displayBrightness = 200;   // 0–255
+    int screenTimeout = 0;         // seconds, 0 = never
+    bool soundEnabled = true;
+    int adminSessionMinutes = 5;
+    uint32_t configVersion = 0;
 };
+
+constexpr uint32_t CONFIG_VERSION_CURRENT = 1;
+
+void resetConfigToDefaults(AppConfig &cfg);
+bool validateConfig(const AppConfig &cfg);
+void printConfigToSerial(const AppConfig &cfg);
 
 struct User {
     uint16_t id = 0;
@@ -82,7 +97,22 @@ uint32_t getNextRecordIdForDay(time_t date);
 bool loadUserSummary(uint16_t userId, UserSummary &out);
 void updateUserSummary(uint16_t userId, const AttendanceRecord &rec);
 
+struct DailyReport {
+    int totalEnrolled = 0;
+    int presentToday = 0;
+    int lateToday = 0;
+    int absentToday = 0;
+    int avgArrivalMin = -1;   // minutes from midnight, -1 if N/A
+    int avgDurationMin = -1;  // average completed session minutes
+};
+
+DailyReport generateDailyReport(time_t date);
+
 String exportDayCSV(time_t date);
+String exportRangeCSV(time_t startDate, time_t endDate);
+String exportUserSummaryCSV(time_t startDate, time_t endDate);
+
+bool saveExportToFS(const String &csv, const char *filename);
 
 size_t getUsedBytes();
 size_t getTotalBytes();

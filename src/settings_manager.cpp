@@ -1,45 +1,48 @@
 #include "settings_manager.h"
 
-#include "storage.h"
+#include "admin_auth.h"
+#include "wifi_manager.h"
 
-static void configToSettings(const AppConfig &cfg, AppSettings &out) {
-    strlcpy(out.deviceName, cfg.deviceName, sizeof(out.deviceName));
-    out.autoNtp = cfg.autoNtp;
-    out.wifiEnabled = cfg.wifiEnabled;
-    strlcpy(out.ssid, cfg.ssid, sizeof(out.ssid));
-    strlcpy(out.wifiPassword, cfg.wifiPassword, sizeof(out.wifiPassword));
-    out.workStartMin = cfg.workStartMin;
-    out.workEndMin = cfg.workEndMin;
-    out.lateThresholdMin = cfg.lateThresholdMin;
-    out.checkInAutoToggle = cfg.checkInAutoToggle;
+int settingsWorkStartMin(const AppSettings &s) {
+    return s.workStartHour * 60 + s.workStartMinute;
 }
 
-static void settingsToConfig(const AppSettings &s, AppConfig &out) {
-    strlcpy(out.deviceName, s.deviceName, sizeof(out.deviceName));
-    out.autoNtp = s.autoNtp;
-    out.wifiEnabled = s.wifiEnabled;
-    strlcpy(out.ssid, s.ssid, sizeof(out.ssid));
-    strlcpy(out.wifiPassword, s.wifiPassword, sizeof(out.wifiPassword));
-    out.workStartMin = s.workStartMin;
-    out.workEndMin = s.workEndMin;
-    out.lateThresholdMin = s.lateThresholdMin;
-    out.checkInAutoToggle = s.checkInAutoToggle;
+int settingsWorkEndMin(const AppSettings &s) {
+    return s.workEndHour * 60 + s.workEndMinute;
+}
+
+void settingsSetWorkStartMin(AppSettings &s, int minutesFromMidnight) {
+    minutesFromMidnight = constrain(minutesFromMidnight, 0, 23 * 60 + 59);
+    s.workStartHour = minutesFromMidnight / 60;
+    s.workStartMinute = minutesFromMidnight % 60;
+}
+
+void settingsSetWorkEndMin(AppSettings &s, int minutesFromMidnight) {
+    minutesFromMidnight = constrain(minutesFromMidnight, 0, 23 * 60 + 59);
+    s.workEndHour = minutesFromMidnight / 60;
+    s.workEndMinute = minutesFromMidnight % 60;
 }
 
 bool settingsLoad(AppSettings &out) {
-    AppConfig cfg;
-    if (!loadConfig(cfg)) {
-        out = AppSettings{};
-        return settingsSave(out);
+    if (!loadConfig(out)) {
+        resetConfigToDefaults(out);
+        return saveConfig(out);
     }
-    configToSettings(cfg, out);
     return true;
 }
 
 bool settingsSave(const AppSettings &settings) {
-    AppConfig cfg;
-    settingsToConfig(settings, cfg);
-    return saveConfig(cfg);
+    const bool ok = saveConfig(settings);
+    if (ok) {
+        settingsApplyRuntime(settings);
+    }
+    return ok;
+}
+
+void settingsApplyRuntime(const AppSettings &settings) {
+    adminAuthApplyConfig(settings);
+    wifiConfigure(settings.wifiEnabled, settings.wifiSSID, settings.wifiPassword,
+                  settings.ntpServer, settings.timezone);
 }
 
 void settingsFormatTime(int minutesFromMidnight, char *buf, size_t len) {

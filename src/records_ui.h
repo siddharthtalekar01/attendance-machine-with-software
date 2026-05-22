@@ -11,6 +11,7 @@ struct RecordsUiState {
     AttendanceRecordView items[100];
     int itemCount = 0;
     RecordsSummary summary{};
+    DailyReport dailyReport{};
     int scrollY = 0;
     float velocity = 0.0f;
     int expandedIndex = -1;
@@ -25,6 +26,7 @@ extern RecordsUiState gRecordsUi;
 
 void recordsReload();
 void drawRecordsScreen(RecordFilter filter);
+void drawRecordsSummaryDashboard(TFT_eSPI &tft, const DailyReport &rep);
 void drawRecordRow(int y, const AttendanceRecordView &view, bool expanded);
 void scrollRecordsList(int delta);
 void recordsTickInertia();

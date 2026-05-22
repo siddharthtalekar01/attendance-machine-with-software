@@ -71,7 +71,7 @@ static void stateBootOnUpdate() {
         if (timeStatus() != timeNotSet) {
             snprintf(timeBuf, sizeof(timeBuf), "%02d:%02d", hour(), minute());
         } else {
-            const String t = gWiFi.formattedTimeHHMM();
+            const String t = formatTime(getCurrentTime()).substring(0, 5);
             t.toCharArray(timeBuf, sizeof(timeBuf));
         }
         changeState(STATE_HOME);
@@ -251,12 +251,14 @@ void loop() {
     adminAuthTick();
     serviceMidnightReset();
 
-    if (gSettingsUi.settings.autoNtp && gWiFi.isConnected()) {
+    wifiUpdate();
+
+    if (gSettingsUi.settings.ntpEnabled && wifiIsConnected() && !wifiNtpSyncInProgress()) {
         static uint32_t lastNtpMs = 0;
         const uint32_t nowMs = millis();
         if (nowMs - lastNtpMs >= NTP_UPDATE_INTERVAL_MS) {
             lastNtpMs = nowMs;
-            gWiFi.syncTime();
+            wifiNtpSyncBegin();
         }
     }
 

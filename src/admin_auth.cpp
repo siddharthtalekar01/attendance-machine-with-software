@@ -28,6 +28,8 @@ constexpr uint32_t SHAKE_MS = 420;
 RTC_DATA_ATTR static uint8_t s_rtcFailCount = 0;
 RTC_DATA_ATTR static uint32_t s_rtcMagic = 0;
 
+static uint32_t s_sessionDurationMs = ADMIN_SESSION_MS;
+
 struct PinHash {
     uint8_t xorKey[8] = {};
     uint8_t checksum = 0;
@@ -317,9 +319,16 @@ bool adminIsSessionActive() {
     return gAdminUnlocked && millis() < s.sessionUntilMs;
 }
 
+void adminAuthApplyConfig(const AppConfig &cfg) {
+    int mins = cfg.adminSessionMinutes;
+    if (mins < 1) mins = 1;
+    if (mins > 120) mins = 120;
+    s_sessionDurationMs = (uint32_t)mins * 60UL * 1000UL;
+}
+
 void adminBeginSession() {
     gAdminUnlocked = true;
-    s.sessionUntilMs = millis() + ADMIN_SESSION_MS;
+    s.sessionUntilMs = millis() + s_sessionDurationMs;
     clearEntry();
     s.pinErrorVisible = false;
 }
@@ -331,7 +340,7 @@ void adminEndSession() {
 
 void adminSessionTouch() {
     if (gAdminUnlocked) {
-        s.sessionUntilMs = millis() + ADMIN_SESSION_MS;
+        s.sessionUntilMs = millis() + s_sessionDurationMs;
     }
 }
 

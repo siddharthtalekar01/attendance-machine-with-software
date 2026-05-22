@@ -141,8 +141,8 @@ void getRowDisplay(SettingRowId id, char *value, size_t vlen, bool &toggleOn, bo
         }
         case SettingRowId::AutoNtp:
             *icon = "NT";
-            strlcpy(value, s.autoNtp ? "ON" : "OFF", vlen);
-            toggleOn = s.autoNtp;
+            strlcpy(value, s.ntpEnabled ? "ON" : "OFF", vlen);
+            toggleOn = s.ntpEnabled;
             type = SettingRowType::Toggle;
             break;
         case SettingRowId::CalibrateTouch:
@@ -158,8 +158,8 @@ void getRowDisplay(SettingRowId id, char *value, size_t vlen, bool &toggleOn, bo
             break;
         case SettingRowId::WifiNetwork:
             *icon = "AP";
-            if (s.ssid[0]) {
-                strlcpy(value, s.ssid, vlen);
+            if (s.wifiSSID[0]) {
+                strlcpy(value, s.wifiSSID, vlen);
             } else if (strlen(WIFI_SSID) > 0) {
                 strlcpy(value, WIFI_SSID, vlen);
             } else {
@@ -169,27 +169,40 @@ void getRowDisplay(SettingRowId id, char *value, size_t vlen, bool &toggleOn, bo
             break;
         case SettingRowId::WifiStatus:
             *icon = "ST";
-            strlcpy(value, gWiFi.isConnected() ? "Connected" : "Disconnected", vlen);
+            switch (wifiGetLinkStatus()) {
+                case WiFiLinkStatus::Connected:
+                    strlcpy(value, "Connected", vlen);
+                    break;
+                case WiFiLinkStatus::Connecting:
+                    strlcpy(value, "Connecting", vlen);
+                    break;
+                case WiFiLinkStatus::Failed:
+                    strlcpy(value, "Failed", vlen);
+                    break;
+                default:
+                    strlcpy(value, "Off", vlen);
+                    break;
+            }
             type = SettingRowType::Badge;
             break;
         case SettingRowId::WorkStart:
             *icon = "IN";
-            settingsFormatTime(s.workStartMin, value, vlen);
+            settingsFormatTime(settingsWorkStartMin(s), value, vlen);
             type = SettingRowType::Text;
             break;
         case SettingRowId::WorkEnd:
             *icon = "OUT";
-            settingsFormatTime(s.workEndMin, value, vlen);
+            settingsFormatTime(settingsWorkEndMin(s), value, vlen);
             type = SettingRowType::Text;
             break;
         case SettingRowId::LateThreshold:
             *icon = "LT";
-            snprintf(value, vlen, "%d min", s.lateThresholdMin);
+            snprintf(value, vlen, "%d min", s.lateThresholdMinutes);
             type = SettingRowType::Text;
             break;
         case SettingRowId::CheckInMode:
             *icon = "MD";
-            strlcpy(value, s.checkInAutoToggle ? "Auto Toggle" : "Manual IN/OUT", vlen);
+            strlcpy(value, s.attendanceMode ? "Auto Toggle" : "Manual IN/OUT", vlen);
             type = SettingRowType::Text;
             break;
         case SettingRowId::TotalEnrolled:
@@ -376,9 +389,10 @@ void drawConfirmDialog(const char *title, const char *body, const char *btn1, co
 
 void settingsUiInit() {
     settingsLoad(gSettingsUi.settings);
-    if (strlen(WIFI_SSID) > 0 && gSettingsUi.settings.ssid[0] == '\0') {
-        strlcpy(gSettingsUi.settings.ssid, WIFI_SSID, sizeof(gSettingsUi.settings.ssid));
+    if (strlen(WIFI_SSID) > 0 && gSettingsUi.settings.wifiSSID[0] == '\0') {
+        strlcpy(gSettingsUi.settings.wifiSSID, WIFI_SSID, sizeof(gSettingsUi.settings.wifiSSID));
     }
+    settingsApplyRuntime(gSettingsUi.settings);
     rebuildLayout();
     gSettingsUi.scrollY = 0;
     gSettingsUi.velocity = 0;
@@ -442,7 +456,69 @@ void drawSettingRow(TFT_eSPI &tft, int y, const char *icon, const char *label, c
     tft.drawLine(10, y + SET_ROW_H - 1, SET_LIST_W - 10, y + SET_ROW_H - 1, 0x2104);
 }
 
+void drawWifiPickerScreen() {
+    TFT_eSPI &tft = gDisplay.tft();
+    tft.fillScreen(COLOR_BG_DARK);
+    tft.fillRect(0, 0, SCREEN_WIDTH, SET_HEADER_H, 0x2104);
+    drawBackArrow(tft, 10, 10, TEXT_PRIMARY);
+    tft.setTextFont(2);
+    tft.setTextColor(TEXT_PRIMARY, 0x2104);
+    tft.setTextDatum(TC_DATUM);
+    tft.drawString("WiFi Networks", SCREEN_WIDTH / 2, 10);
+    tft.setTextDatum(TL_DATUM);
+
+    wifiUpdate();
+
+    if (wifiScanInProgress() || !wifiScanComplete()) {
+        if (gSettingsUi.wifiScanCount == 0 && WiFi.scanComplete() < 0) {
+            startWifiScan();
+        }
+        tft.setTextFont(2);
+        tft.setTextColor(TEXT_MUTED, COLOR_BG_DARK);
+        tft.setTextDatum(MC_DATUM);
+        tft.drawString("Scanning...", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+        tft.setTextDatum(TL_DATUM);
+        return;
+    }
+
+    if (gSettingsUi.wifiScanCount == 0) {
+        gSettingsUi.wifiScanCount =
+            getWifiScanResults(gSettingsUi.wifiScanBuf, (int)(sizeof(gSettingsUi.wifiScanBuf) /
+                                                              sizeof(gSettingsUi.wifiScanBuf[0])));
+    }
+
+    constexpr int rowH = 36;
+    int y = SET_HEADER_H + 4;
+    for (int i = 0; i < gSettingsUi.wifiScanCount && y + rowH < SCREEN_HEIGHT; i++) {
+        const WiFiResult &net = gSettingsUi.wifiScanBuf[i];
+        tft.fillRoundRect(8, y, SCREEN_WIDTH - 16, rowH - 2, 4, BG_SECONDARY);
+        tft.setTextFont(2);
+        tft.setTextColor(TEXT_PRIMARY, BG_SECONDARY);
+        tft.drawString(net.ssid, 14, y + 10);
+        drawWifiSignalBars(tft, SCREEN_WIDTH - 44, y + 8, net.rssi, ACCENT_BLUE);
+        if (net.encrypted) {
+            tft.setTextFont(1);
+            tft.setTextColor(TEXT_MUTED, BG_SECONDARY);
+            tft.drawString("*", SCREEN_WIDTH - 54, y + 12);
+        }
+        y += rowH;
+    }
+
+    if (gSettingsUi.wifiScanCount == 0) {
+        tft.setTextFont(2);
+        tft.setTextColor(TEXT_MUTED, COLOR_BG_DARK);
+        tft.setTextDatum(MC_DATUM);
+        tft.drawString("No networks found", SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2);
+        tft.setTextDatum(TL_DATUM);
+    }
+}
+
 void drawSettingsScreen() {
+    if (gSettingsUi.wifiPickerOpen) {
+        drawWifiPickerScreen();
+        return;
+    }
+
     rebuildLayout();
     TFT_eSPI &tft = gDisplay.tft();
     tft.fillScreen(COLOR_BG_DARK);
@@ -535,51 +611,55 @@ static void applyRowAction(SettingRowId id, int tapX) {
             if (timeStatus() != timeNotSet) {
                 setTime(now() + 3600);
             }
-            if (s.autoNtp) {
-                gWiFi.syncTime();
+            if (s.ntpEnabled && wifiIsConnected()) {
+                syncNTP();
             }
             break;
         case SettingRowId::AutoNtp:
-            s.autoNtp = !s.autoNtp;
-            if (s.autoNtp) gWiFi.syncTime();
+            s.ntpEnabled = !s.ntpEnabled;
+            if (s.ntpEnabled && wifiIsConnected()) {
+                syncNTP();
+            }
             break;
         case SettingRowId::CalibrateTouch:
             calibrateTouch();
             break;
         case SettingRowId::WifiEnable:
             s.wifiEnabled = !s.wifiEnabled;
-            if (s.wifiEnabled && s.ssid[0]) {
-                gWiFi.begin(s.ssid, s.wifiPassword);
-                gWiFi.connect();
-            } else if (!s.wifiEnabled) {
+            if (s.wifiEnabled) {
+                connectToNetwork(s.wifiSSID, s.wifiPassword);
+            } else {
+                wifiSetEnabled(false);
                 WiFi.disconnect(true);
             }
             break;
         case SettingRowId::WifiNetwork:
-            if (strlen(WIFI_SSID) > 0) {
-                strlcpy(s.ssid, WIFI_SSID, sizeof(s.ssid));
-                strlcpy(s.wifiPassword, WIFI_PASSWORD, sizeof(s.wifiPassword));
-                gWiFi.begin(s.ssid, s.wifiPassword);
-                gWiFi.connect();
-            }
+            gSettingsUi.wifiPickerOpen = true;
+            gSettingsUi.wifiScanCount = 0;
+            startWifiScan();
+            drawSettingsScreen();
+            return;
+        case SettingRowId::WorkStart: {
+            int t = settingsWorkStartMin(s) + 30;
+            if (t >= 24 * 60) t = 0;
+            settingsSetWorkStartMin(s, t);
             break;
-        case SettingRowId::WorkStart:
-            s.workStartMin += 30;
-            if (s.workStartMin >= 24 * 60) s.workStartMin = 0;
+        }
+        case SettingRowId::WorkEnd: {
+            int t = settingsWorkEndMin(s) + 30;
+            if (t >= 24 * 60) t = 0;
+            settingsSetWorkEndMin(s, t);
             break;
-        case SettingRowId::WorkEnd:
-            s.workEndMin += 30;
-            if (s.workEndMin >= 24 * 60) s.workEndMin = 0;
-            break;
+        }
         case SettingRowId::LateThreshold:
             if (tapX < SET_LIST_W / 2) {
-                s.lateThresholdMin = max(0, s.lateThresholdMin - 5);
+                s.lateThresholdMinutes = max(0, s.lateThresholdMinutes - 5);
             } else {
-                s.lateThresholdMin = min(120, s.lateThresholdMin + 5);
+                s.lateThresholdMinutes = min(120, s.lateThresholdMinutes + 5);
             }
             break;
         case SettingRowId::CheckInMode:
-            s.checkInAutoToggle = !s.checkInAutoToggle;
+            s.attendanceMode = s.attendanceMode ? 0 : 1;
             break;
         case SettingRowId::WifiStatus:
         case SettingRowId::TotalEnrolled:
@@ -597,9 +677,14 @@ static void applyRowAction(SettingRowId id, int tapX) {
             drawSettingsScreen();
             return;
         case SettingRowId::ExportData: {
-            const String csv = exportDayCSV(now());
-            Serial.println("[Settings] CSV export (today):");
-            Serial.println(csv);
+            const time_t today = now();
+            const String csv = exportDayCSV(today);
+            char fname[40];
+            snprintf(fname, sizeof(fname), "%04d-%02d-%02d_export.csv", year(today), month(today),
+                     day(today));
+            if (saveExportToFS(csv, fname)) {
+                Serial.printf("[Settings] Saved /exports/%s\n", fname);
+            }
             break;
         }
         case SettingRowId::ClearRecords:
@@ -688,7 +773,7 @@ bool settingsHandleDialogTap(int x, int y) {
             udoc["users"] = JsonArray();
             gStorage.saveUsers(udoc);
             adminResetPinToDefault();
-            gSettingsUi.settings = AppSettings{};
+            resetConfigToDefaults(gSettingsUi.settings);
             settingsSave(gSettingsUi.settings);
         }
         drawSettingsScreen();
@@ -697,8 +782,47 @@ bool settingsHandleDialogTap(int x, int y) {
     return true;
 }
 
+bool settingsWifiPickerHandleTap(int x, int y) {
+    if (!gSettingsUi.wifiPickerOpen) return false;
+
+    if (isTouchInRect({x, y, true}, 0, 0, 44, SET_HEADER_H)) {
+        gSettingsUi.wifiPickerOpen = false;
+        gSettingsUi.wifiScanCount = 0;
+        drawSettingsScreen();
+        return true;
+    }
+
+    if (wifiScanInProgress() || gSettingsUi.wifiScanCount == 0) {
+        drawWifiPickerScreen();
+        return true;
+    }
+
+    constexpr int rowH = 36;
+    int rowY = SET_HEADER_H + 4;
+    for (int i = 0; i < gSettingsUi.wifiScanCount; i++) {
+        if (y >= rowY && y < rowY + rowH) {
+            AppSettings &s = gSettingsUi.settings;
+            strlcpy(s.wifiSSID, gSettingsUi.wifiScanBuf[i].ssid, sizeof(s.wifiSSID));
+            s.wifiEnabled = true;
+            connectToNetwork(s.wifiSSID, s.wifiPassword);
+            settingsSave(s);
+            gSettingsUi.wifiPickerOpen = false;
+            gSettingsUi.wifiScanCount = 0;
+            drawSettingsScreen();
+            return true;
+        }
+        rowY += rowH;
+    }
+
+    return true;
+}
+
 bool settingsHandleTap(int x, int y) {
     if (settingsHandleDialogTap(x, y)) return true;
+
+    if (gSettingsUi.wifiPickerOpen) {
+        return settingsWifiPickerHandleTap(x, y);
+    }
 
     if (isTouchInRect({x, y, true}, 0, 0, 44, SET_HEADER_H)) {
         return true;
@@ -713,6 +837,7 @@ bool settingsHandleTap(int x, int y) {
 }
 
 void settingsHandleTouchDown(int x, int y) {
+    if (gSettingsUi.wifiPickerOpen) return;
     gSettingsUi.dragging = isTouchInRect({x, y, true}, 0, SET_LIST_Y, SET_LIST_W, SET_LIST_H);
     gSettingsUi.lastTouchY = y;
     gSettingsUi.velocity = 0;

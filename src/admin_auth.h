@@ -3,6 +3,7 @@
 #include <Arduino.h>
 #include "app_state.h"
 #include "display.h"
+#include "storage.h"
 
 // PIN policy
 constexpr int ADMIN_PIN_MIN_LEN = 4;
@@ -21,6 +22,9 @@ extern bool gAdminUnlocked;
 
 /** Initialize storage, RTC fail counter, default PIN if missing. Call after LittleFS mount. */
 void adminAuthInit();
+
+/** Apply admin session duration from AppConfig (call after settings load). */
+void adminAuthApplyConfig(const AppConfig &cfg);
 
 /** Call every main loop tick — animations, lockout countdown, session expiry. */
 void adminAuthTick();

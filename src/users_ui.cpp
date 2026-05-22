@@ -8,13 +8,14 @@
 #include "admin_auth.h"
 #include "fingerprint.h"
 #include "ui_screens.h"
+#include "virtual_keyboard.h"
 
 UsersUiState gUsersUi;
 
 namespace {
 
 constexpr int LIST_W = SCREEN_WIDTH;
-constexpr int KB_H = 96;
+constexpr int KB_H = VIRTUAL_KEYBOARD_H;
 
 int listAreaHeight() {
     return gUsersUi.kbVisible ? (USR_LIST_H - KB_H) : USR_LIST_H;
@@ -133,95 +134,35 @@ int rowScreenY(int fi) {
     return listAreaY() + fi * USR_ROW_H - gUsersUi.scrollY;
 }
 
+static VirtualKeyboardState &usersKeyboardState() {
+    static VirtualKeyboardState kb;
+    kb.shift = gUsersUi.kbShift;
+    return kb;
+}
+
+static void syncUsersKbShift(const VirtualKeyboardState &kb) {
+    gUsersUi.kbShift = kb.shift;
+}
+
 void drawVirtualKeyboard(TFT_eSPI &tft) {
     const int y0 = SCREEN_HEIGHT - KB_H;
-    tft.fillRect(0, y0, SCREEN_WIDTH, KB_H, 0x2104);
-    tft.drawLine(0, y0, SCREEN_WIDTH, y0, TEXT_MUTED);
-
-    const char *row1 = (gUsersUi.kbShift == 2) ? "1234567890" : "qwertyuiop";
-    const char *row2 = (gUsersUi.kbShift == 2) ? "" : "asdfghjkl";
-    const char *row3 = (gUsersUi.kbShift == 2) ? "" : "zxcvbnm";
-
-    auto drawRow = [&](const char *keys, int row, int keyW) {
-        if (!keys || !keys[0]) return;
-        const int n = strlen(keys);
-        const int totalW = n * keyW;
-        int x = (SCREEN_WIDTH - totalW) / 2;
-        const int ky = y0 + 8 + row * 26;
-        for (int i = 0; i < n; i++) {
-            tft.fillRoundRect(x, ky, keyW - 2, 22, 3, 0x4208);
-            char ch[2] = {keys[i], 0};
-            if (gUsersUi.kbShift == 1) {
-                ch[0] = toupper(ch[0]);
-            }
-            tft.setTextFont(1);
-            tft.setTextColor(TEXT_PRIMARY, 0x4208);
-            tft.setTextDatum(MC_DATUM);
-            tft.drawString(ch, x + keyW / 2 - 1, ky + 11);
-            x += keyW;
-        }
-        tft.setTextDatum(TL_DATUM);
-    };
-
-    drawRow(row1, 0, 22);
-    if (gUsersUi.kbShift != 2) {
-        drawRow(row2, 1, 22);
-        drawRow(row3, 2, 24);
-    }
-
-    tft.fillRoundRect(4, y0 + KB_H - 28, 40, 22, 3, ACCENT_BLUE);
-    tft.setTextDatum(MC_DATUM);
-    tft.drawString(gUsersUi.kbShift == 2 ? "ABC" : "123", 24, y0 + KB_H - 17);
-    tft.fillRoundRect(SCREEN_WIDTH - 44, y0 + KB_H - 28, 40, 22, 3, TEXT_MUTED);
-    tft.drawString("Del", SCREEN_WIDTH - 24, y0 + KB_H - 17);
-    tft.setTextDatum(TL_DATUM);
+    VirtualKeyboardState &kb = usersKeyboardState();
+    drawKeyboard(tft, y0, gUsersUi.searchBuf, MAX_NAME_LEN, true, &kb);
+    syncUsersKbShift(kb);
 }
 
 bool handleKeyboardTap(int x, int y) {
     if (!gUsersUi.kbVisible) return false;
     const int y0 = SCREEN_HEIGHT - KB_H;
-    if (y < y0) return false;
-
-    if (isTouchInRect({x, y, true}, 4, y0 + KB_H - 28, 40, 22)) {
-        gUsersUi.kbShift = (gUsersUi.kbShift + 1) % 3;
-        drawUsersScreen();
-        return true;
-    }
-    if (isTouchInRect({x, y, true}, SCREEN_WIDTH - 44, y0 + KB_H - 28, 40, 22)) {
-        if (gUsersUi.searchLen > 0) gUsersUi.searchBuf[--gUsersUi.searchLen] = '\0';
+    TouchPoint tp{x, y, true};
+    VirtualKeyboardState &kb = usersKeyboardState();
+    if (handleKeyboardTouch(tp, y0, gUsersUi.searchBuf, gUsersUi.searchLen, MAX_NAME_LEN, &kb)) {
+        syncUsersKbShift(kb);
         rebuildFilter();
         drawUsersScreen();
         return true;
     }
-
-    const char *rows[3];
-    rows[0] = (gUsersUi.kbShift == 2) ? "1234567890" : "qwertyuiop";
-    rows[1] = (gUsersUi.kbShift == 2) ? "" : "asdfghjkl";
-    rows[2] = (gUsersUi.kbShift == 2) ? "" : "zxcvbnm";
-
-    for (int r = 0; r < 3; r++) {
-        if (!rows[r][0]) continue;
-        const int n = strlen(rows[r]);
-        const int keyW = (r == 2) ? 24 : 22;
-        const int totalW = n * keyW;
-        int kx = (SCREEN_WIDTH - totalW) / 2;
-        const int ky = y0 + 8 + r * 26;
-        for (int i = 0; i < n; i++) {
-            if (isTouchInRect({x, y, true}, kx, ky, keyW - 2, 22)) {
-                if (gUsersUi.searchLen < MAX_NAME_LEN - 1) {
-                    char ch = rows[r][i];
-                    if (gUsersUi.kbShift == 1) ch = toupper(ch);
-                    gUsersUi.searchBuf[gUsersUi.searchLen++] = ch;
-                    gUsersUi.searchBuf[gUsersUi.searchLen] = '\0';
-                    rebuildFilter();
-                    drawUsersScreen();
-                }
-                return true;
-            }
-            kx += keyW;
-        }
-    }
-    return true;
+    return false;
 }
 
 }  // namespace

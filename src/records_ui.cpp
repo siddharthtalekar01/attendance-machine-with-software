@@ -14,6 +14,16 @@ namespace {
 constexpr int LIST_W = SCREEN_WIDTH;
 constexpr int LIST_H = REC_LIST_H;
 
+static time_t startOfDayLocal(time_t t) {
+    if (timeStatus() == timeNotSet) return t;
+    tmElements_t te;
+    breakTime(t, te);
+    te.Hour = 0;
+    te.Minute = 0;
+    te.Second = 0;
+    return makeTime(te);
+}
+
 void formatDateLabel(time_t dayAnchor, char *buf, size_t len) {
     if (timeStatus() == timeNotSet) {
         strlcpy(buf, "Today", len);
@@ -123,7 +133,56 @@ void recordsReload() {
     gRecordsUi.itemCount = gStorage.loadAttendanceFiltered(
         gRecordsUi.filter, gRecordsUi.dayAnchor, gRecordsUi.items, REC_MAX_ITEMS, &gRecordsUi.summary);
     gRecordsUi.expandedIndex = -1;
+
+    const time_t reportDay = (gRecordsUi.filter == RecordFilter::All) ? now() : gRecordsUi.dayAnchor;
+    gRecordsUi.dailyReport = generateDailyReport(reportDay);
+
     recomputeContentHeight();
+}
+
+void drawRecordsSummaryDashboard(TFT_eSPI &tft, const DailyReport &rep) {
+    const int cardGap = 4;
+    const int cardW = (SCREEN_WIDTH - 8 - cardGap * 3) / 4;
+    const int y = REC_SUMMARY_Y;
+    const int h = REC_SUMMARY_H;
+
+    tft.fillRect(0, y, SCREEN_WIDTH, h, COLOR_BG_DARK);
+
+    auto drawCard = [&](int idx, const char *label, const char *value, uint16_t accent) {
+        const int x = 4 + idx * (cardW + cardGap);
+        tft.fillRoundRect(x, y + 4, cardW, h - 8, 6, BG_SECONDARY);
+        tft.drawRoundRect(x, y + 4, cardW, h - 8, 6, accent);
+
+        tft.setTextFont(1);
+        tft.setTextColor(TEXT_MUTED, BG_SECONDARY);
+        tft.setTextDatum(TC_DATUM);
+        tft.drawString(label, x + cardW / 2, y + 10);
+
+        tft.setTextFont(2);
+        tft.setTextColor(accent, BG_SECONDARY);
+        tft.drawString(value, x + cardW / 2, y + 28);
+        tft.setTextDatum(TL_DATUM);
+    };
+
+    char buf[12];
+
+    snprintf(buf, sizeof(buf), "%d", rep.presentToday);
+    drawCard(0, "Present", buf, ACCENT_GREEN);
+
+    snprintf(buf, sizeof(buf), "%d", rep.lateToday);
+    drawCard(1, "Late", buf, STATUS_AMBER);
+
+    snprintf(buf, sizeof(buf), "%d", rep.absentToday);
+    drawCard(2, "Absent", buf, ACCENT_RED);
+
+    if (rep.avgArrivalMin >= 0) {
+        snprintf(buf, sizeof(buf), "%02d:%02d", rep.avgArrivalMin / 60, rep.avgArrivalMin % 60);
+    } else if (rep.avgDurationMin >= 0) {
+        snprintf(buf, sizeof(buf), "%dm", rep.avgDurationMin);
+    } else {
+        strlcpy(buf, "--:--", sizeof(buf));
+    }
+    drawCard(3, "Avg Time", buf, ACCENT_BLUE);
 }
 
 void drawRecordRow(int y, const AttendanceRecordView &view, bool expanded) {
@@ -240,10 +299,12 @@ void drawRecordsScreen(RecordFilter filter) {
     tft.drawString(badge, SCREEN_WIDTH - badgeW / 2 - 8, REC_FILTER_Y + 13);
     tft.setTextDatum(TL_DATUM);
 
+    drawRecordsSummaryDashboard(tft, gRecordsUi.dailyReport);
+
     tft.fillRect(0, REC_BOTTOM_Y, SCREEN_WIDTH, SCREEN_HEIGHT - REC_BOTTOM_Y, 0x2104);
-    char summary[48];
-    snprintf(summary, sizeof(summary), "Total: %d | In: %d | Out: %d", gRecordsUi.summary.total,
-             gRecordsUi.summary.checkIns, gRecordsUi.summary.checkOuts);
+    char summary[56];
+    snprintf(summary, sizeof(summary), "%d enrolled | %d events", gRecordsUi.dailyReport.totalEnrolled,
+             gRecordsUi.summary.total);
     tft.setTextFont(1);
     tft.setTextColor(TEXT_MUTED, 0x2104);
     tft.drawString(summary, 10, REC_BOTTOM_Y + 6);
@@ -369,7 +430,23 @@ bool recordsHandleChromeTap(int x, int y) {
     }
 
     if (isTouchInRect(tp, 10, REC_BOTTOM_Y + 22, 100, 24)) {
-        Serial.println("[Records] Export CSV (stub)");
+        const time_t day = startOfDayLocal(gRecordsUi.dayAnchor);
+        String csv;
+        if (gRecordsUi.filter == RecordFilter::Week) {
+            csv = exportRangeCSV(day - 6 * 86400, day);
+        } else if (gRecordsUi.filter == RecordFilter::All) {
+            csv = exportRangeCSV(day - 30 * 86400, day);
+        } else {
+            csv = exportDayCSV(day);
+        }
+
+        char fname[40];
+        snprintf(fname, sizeof(fname), "%04d-%02d-%02d_export.csv", year(day), month(day), day(day));
+        if (saveExportToFS(csv, fname)) {
+            Serial.printf("[Records] Saved /exports/%s (%u bytes)\n", fname, (unsigned)csv.length());
+        } else {
+            Serial.println("[Records] Export save failed");
+        }
         return true;
     }
 

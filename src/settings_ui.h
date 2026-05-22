@@ -3,6 +3,7 @@
 #include <TFT_eSPI.h>
 #include "config.h"
 #include "settings_manager.h"
+#include "wifi_manager.h"
 
 enum class SettingRowType : uint8_t {
     Text = 0,
@@ -35,6 +36,9 @@ enum class SettingRowId : int8_t {
 
 struct SettingsUiState {
     AppSettings settings{};
+    bool wifiPickerOpen = false;
+    WiFiResult wifiScanBuf[16];
+    int wifiScanCount = 0;
     int scrollY = 0;
     float velocity = 0.0f;
     int totalContentHeight = 0;
@@ -64,6 +68,8 @@ void settingsUiInit();
 void drawSettingRow(TFT_eSPI &tft, int y, const char *icon, const char *label, const char *value,
                     SettingRowType type, bool toggleOn = false, bool danger = false);
 void drawSettingsScreen();
+void drawWifiPickerScreen();
+bool settingsWifiPickerHandleTap(int x, int y);
 void settingsScrollList(int delta);
 void settingsTickInertia();
 void settingsHandleTouchDown(int x, int y);

@@ -126,6 +126,7 @@ void pumpInit() {
             setTask("Loading config...");
             touchLoadCalibration();
             settingsLoad(gSettingsUi.settings);
+            settingsApplyRuntime(gSettingsUi.settings);
             adminAuthInit();
             s.initDisplay = InitStep::Config;
             s.initStep = InitStep::Fingerprint;
@@ -145,30 +146,27 @@ void pumpInit() {
 
         case InitStep::WiFi: {
             const AppSettings &cfg = gSettingsUi.settings;
-            const char *ssid = cfg.ssid[0] ? cfg.ssid : WIFI_SSID;
+            const char *ssid = cfg.wifiSSID[0] ? cfg.wifiSSID : WIFI_SSID;
             const char *pass = cfg.wifiPassword[0] ? cfg.wifiPassword : WIFI_PASSWORD;
 
             if (!s.wifiStarted) {
                 s.wifiStarted = true;
                 if (cfg.wifiEnabled && ssid[0]) {
                     setTask("Connecting WiFi...");
-                    gWiFi.begin(ssid, pass);
-                    gWiFi.connectBegin(8000);
                 } else {
                     setTask("WiFi skipped");
+                    wifiSetEnabled(false);
                     s.initDisplay = InitStep::WiFi;
                     s.initStep = InitStep::Ntp;
                 }
                 break;
             }
 
-            if (gWiFi.connectInProgress()) {
-                gWiFi.connectPoll();
-                if (gWiFi.connectInProgress()) {
-                    return;
-                }
+            wifiUpdate();
+            if (wifiConnectInProgress()) {
+                return;
             }
-            if (s.wifiStarted && cfg.wifiEnabled && ssid[0] && !gWiFi.connectSucceeded()) {
+            if (s.wifiStarted && cfg.wifiEnabled && ssid[0] && !wifiIsConnected()) {
                 setTask("WiFi unavailable", true);
                 s.hadWarnings = true;
             }
@@ -178,24 +176,16 @@ void pumpInit() {
         }
 
         case InitStep::Ntp:
-            if (gSettingsUi.settings.autoNtp && gWiFi.isConnected()) {
+            if (gSettingsUi.settings.ntpEnabled && wifiIsConnected()) {
                 if (!s.ntpStarted) {
                     setTask("Syncing time...");
-                    gWiFi.ntpSyncBegin();
                     s.ntpStarted = true;
-                    break;
-                }
-                if (gWiFi.ntpSyncInProgress()) {
-                    gWiFi.ntpSyncPoll();
-                    if (gWiFi.ntpSyncInProgress()) {
-                        return;
+                    if (!syncNTP() && getCurrentTime() <= 0) {
+                        setTask("Time not synced", true);
+                        s.hadWarnings = true;
                     }
                 }
-                if (timeStatus() == timeNotSet) {
-                    setTask("Time not synced", true);
-                    s.hadWarnings = true;
-                }
-            } else if (gSettingsUi.settings.autoNtp) {
+            } else if (gSettingsUi.settings.ntpEnabled) {
                 setTask("Time not synced", true);
                 s.hadWarnings = true;
             }

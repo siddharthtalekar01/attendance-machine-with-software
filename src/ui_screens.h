@@ -97,6 +97,12 @@ private:
     int _recordsLastX = 0;
     int _recordsLastY = 0;
 
+    bool _wifiDragging = false;
+    int _wifiLastX = 0;
+    int _wifiLastY = 0;
+
+    void handleWifiSetupTouch(const TouchPoint &tp);
+
     bool _bootCardActive = false;
     uint32_t _bootCardStartMs = 0;
     char _bootCardLine1[32] = {};

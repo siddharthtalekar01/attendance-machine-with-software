@@ -68,8 +68,10 @@ constexpr const char *USERS_FILE = "/users.json";
 constexpr const char *LOG_FILE   = "/attendance.json";
 
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
+constexpr uint32_t WIFI_RETRY_INTERVAL_MS    = 300000;  // 5 minutes
 constexpr int      NTP_TIMEZONE_OFFSET_SEC = 0;
 constexpr unsigned long NTP_UPDATE_INTERVAL_MS = 600000;
+constexpr const char *NTP_LAST_SYNC_FILE = "/config/ntp_last_sync.txt";
 
 // Splash / boot animation (millis timelines)
 constexpr uint32_t SPLASH_ICON_MS       = 600;
@@ -131,8 +133,10 @@ constexpr int HOME_CLOCK_MS   = 1000;
 constexpr int REC_HEADER_H     = 45;
 constexpr int REC_FILTER_Y     = 45;
 constexpr int REC_FILTER_H     = 25;
-constexpr int REC_LIST_Y       = 70;
-constexpr int REC_LIST_H       = 220;
+constexpr int REC_SUMMARY_Y    = 70;
+constexpr int REC_SUMMARY_H    = 56;
+constexpr int REC_LIST_Y       = 126;
+constexpr int REC_LIST_H       = 164;
 constexpr int REC_BOTTOM_Y     = 290;
 constexpr int REC_ROW_H        = 44;
 constexpr int REC_ROW_EXPANDED = 40;

@@ -10,6 +10,7 @@ namespace {
 constexpr const char *DIR_CONFIG = "/config";
 constexpr const char *DIR_USERS = "/users";
 constexpr const char *DIR_RECORDS = "/records";
+constexpr const char *DIR_EXPORTS = "/exports";
 constexpr const char *FILE_SETTINGS = "/config/settings.json";
 constexpr const char *FILE_USERS_INDEX = "/users/index.json";
 constexpr const char *FILE_SUMMARY = "/records/summary.json";
@@ -28,7 +29,8 @@ bool ensureDir(const char *path) {
 }
 
 bool ensureDirs() {
-    return ensureDir(DIR_CONFIG) && ensureDir(DIR_USERS) && ensureDir(DIR_RECORDS);
+    return ensureDir(DIR_CONFIG) && ensureDir(DIR_USERS) && ensureDir(DIR_RECORDS) &&
+           ensureDir(DIR_EXPORTS);
 }
 
 bool writeFileVerified(const char *path, const uint8_t *data, size_t len) {
@@ -306,10 +308,14 @@ bool storageInit() {
 
     if (!ensureDirs()) return false;
 
+    AppConfig bootCfg;
     if (!LittleFS.exists(FILE_SETTINGS)) {
-        AppConfig cfg;
-        saveConfig(cfg);
+        resetConfigToDefaults(bootCfg);
+        saveConfig(bootCfg);
+    } else {
+        loadConfig(bootCfg);
     }
+    printConfigToSerial(bootCfg);
     if (!LittleFS.exists(FILE_USERS_INDEX)) {
         JsonDocument doc;
         doc["users"].to<JsonArray>();
@@ -334,40 +340,187 @@ bool storageInit() {
     return true;
 }
 
+void resetConfigToDefaults(AppConfig &cfg) {
+    memset(&cfg, 0, sizeof(cfg));
+    strlcpy(cfg.deviceName, "Attendance Terminal 1", sizeof(cfg.deviceName));
+    cfg.wifiEnabled = true;
+    cfg.ntpEnabled = true;
+    strlcpy(cfg.ntpServer, "pool.ntp.org", sizeof(cfg.ntpServer));
+    cfg.timezone = 0;
+    cfg.workStartHour = 9;
+    cfg.workStartMinute = 0;
+    cfg.workEndHour = 18;
+    cfg.workEndMinute = 0;
+    cfg.lateThresholdMinutes = 15;
+    cfg.attendanceMode = 1;
+    cfg.displayBrightness = 200;
+    cfg.screenTimeout = 0;
+    cfg.soundEnabled = true;
+    cfg.adminSessionMinutes = 5;
+    cfg.configVersion = CONFIG_VERSION_CURRENT;
+}
+
+bool validateConfig(const AppConfig &cfg) {
+    if (cfg.deviceName[0] == '\0') return false;
+    if (cfg.workStartHour < 0 || cfg.workStartHour > 23) return false;
+    if (cfg.workStartMinute < 0 || cfg.workStartMinute > 59) return false;
+    if (cfg.workEndHour < 0 || cfg.workEndHour > 23) return false;
+    if (cfg.workEndMinute < 0 || cfg.workEndMinute > 59) return false;
+    if (cfg.lateThresholdMinutes < 0 || cfg.lateThresholdMinutes > 180) return false;
+    if (cfg.attendanceMode < 0 || cfg.attendanceMode > 1) return false;
+    if (cfg.displayBrightness < 0 || cfg.displayBrightness > 255) return false;
+    if (cfg.screenTimeout < 0 || cfg.screenTimeout > 86400) return false;
+    if (cfg.adminSessionMinutes < 1 || cfg.adminSessionMinutes > 120) return false;
+    if (cfg.timezone < -720 || cfg.timezone > 840) return false;
+    if (cfg.ntpServer[0] == '\0') return false;
+    return true;
+}
+
+void printConfigToSerial(const AppConfig &cfg) {
+    Serial.println("[Config] ---- settings ----");
+    Serial.printf("  deviceName: %s\n", cfg.deviceName);
+    Serial.printf("  wifiEnabled: %s\n", cfg.wifiEnabled ? "true" : "false");
+    Serial.printf("  wifiSSID: %s\n", cfg.wifiSSID[0] ? cfg.wifiSSID : "(empty)");
+    Serial.printf("  wifiPassword: %s\n", cfg.wifiPassword[0] ? "***" : "(empty)");
+    Serial.printf("  ntpEnabled: %s\n", cfg.ntpEnabled ? "true" : "false");
+    Serial.printf("  ntpServer: %s\n", cfg.ntpServer);
+    Serial.printf("  timezone: %+d min\n", cfg.timezone);
+    Serial.printf("  workStart: %02d:%02d\n", cfg.workStartHour, cfg.workStartMinute);
+    Serial.printf("  workEnd: %02d:%02d\n", cfg.workEndHour, cfg.workEndMinute);
+    Serial.printf("  lateThresholdMinutes: %d\n", cfg.lateThresholdMinutes);
+    Serial.printf("  attendanceMode: %d (%s)\n", cfg.attendanceMode,
+                  cfg.attendanceMode ? "Auto Toggle" : "Manual IN/OUT");
+    Serial.printf("  displayBrightness: %d\n", cfg.displayBrightness);
+    Serial.printf("  screenTimeout: %d s\n", cfg.screenTimeout);
+    Serial.printf("  soundEnabled: %s\n", cfg.soundEnabled ? "true" : "false");
+    Serial.printf("  adminSessionMinutes: %d\n", cfg.adminSessionMinutes);
+    Serial.printf("  configVersion: %lu\n", (unsigned long)cfg.configVersion);
+    Serial.println("[Config] ------------------");
+}
+
+static void partsFromWorkMinutes(int totalMin, int &hour, int &minute) {
+    totalMin = constrain(totalMin, 0, 23 * 60 + 59);
+    hour = totalMin / 60;
+    minute = totalMin % 60;
+}
+
+static void migrateConfig(AppConfig &cfg, uint32_t fromVersion) {
+    if (fromVersion >= CONFIG_VERSION_CURRENT) return;
+
+    if (fromVersion < 1) {
+        cfg.configVersion = CONFIG_VERSION_CURRENT;
+    }
+}
+
+static void applyLegacyJsonFields(AppConfig &cfg, JsonObjectConst root) {
+    if (root["wifiSSID"].isNull() && !root["ssid"].isNull()) {
+        strlcpy(cfg.wifiSSID, root["ssid"] | "", sizeof(cfg.wifiSSID));
+    }
+    if (root["ntpEnabled"].isNull() && !root["autoNtp"].isNull()) {
+        cfg.ntpEnabled = root["autoNtp"] | true;
+    }
+    if (root["lateThresholdMinutes"].isNull() && !root["lateThresholdMin"].isNull()) {
+        cfg.lateThresholdMinutes = root["lateThresholdMin"] | 15;
+    }
+    if (root["workStartHour"].isNull() && !root["workStartMin"].isNull()) {
+        const int m = root["workStartMin"] | (9 * 60);
+        partsFromWorkMinutes(m, cfg.workStartHour, cfg.workStartMinute);
+    }
+    if (root["workEndHour"].isNull() && !root["workEndMin"].isNull()) {
+        const int m = root["workEndMin"] | (18 * 60);
+        partsFromWorkMinutes(m, cfg.workEndHour, cfg.workEndMinute);
+    }
+    if (root["attendanceMode"].isNull() && !root["checkInAutoToggle"].isNull()) {
+        cfg.attendanceMode = (root["checkInAutoToggle"] | true) ? 1 : 0;
+    }
+}
+
+static void parseConfigFromJson(AppConfig &cfg, JsonObjectConst root) {
+    strlcpy(cfg.deviceName, root["deviceName"] | "Attendance Terminal 1", sizeof(cfg.deviceName));
+    strlcpy(cfg.wifiSSID, root["wifiSSID"] | "", sizeof(cfg.wifiSSID));
+    strlcpy(cfg.wifiPassword, root["wifiPassword"] | "", sizeof(cfg.wifiPassword));
+    cfg.wifiEnabled = root["wifiEnabled"] | true;
+    cfg.ntpEnabled = root["ntpEnabled"] | true;
+    strlcpy(cfg.ntpServer, root["ntpServer"] | "pool.ntp.org", sizeof(cfg.ntpServer));
+    cfg.timezone = root["timezone"] | 0;
+    cfg.workStartHour = root["workStartHour"] | 9;
+    cfg.workStartMinute = root["workStartMinute"] | 0;
+    cfg.workEndHour = root["workEndHour"] | 18;
+    cfg.workEndMinute = root["workEndMinute"] | 0;
+    cfg.lateThresholdMinutes = root["lateThresholdMinutes"] | 15;
+    cfg.attendanceMode = root["attendanceMode"] | 1;
+    cfg.displayBrightness = root["displayBrightness"] | 200;
+    cfg.screenTimeout = root["screenTimeout"] | 0;
+    cfg.soundEnabled = root["soundEnabled"] | true;
+    cfg.adminSessionMinutes = root["adminSessionMinutes"] | 5;
+    cfg.configVersion = root["configVersion"] | 0;
+
+    applyLegacyJsonFields(cfg, root);
+}
+
 bool loadConfig(AppConfig &cfg) {
-    cfg = AppConfig{};
-    if (!s_mounted) return false;
+    if (!s_mounted) {
+        resetConfigToDefaults(cfg);
+        return false;
+    }
 
     JsonDocument doc;
     if (!readJsonFile(FILE_SETTINGS, doc)) {
+        resetConfigToDefaults(cfg);
         return saveConfig(cfg);
     }
 
-    strlcpy(cfg.deviceName, doc["deviceName"] | "Attendance", sizeof(cfg.deviceName));
-    cfg.autoNtp = doc["autoNtp"] | true;
-    cfg.wifiEnabled = doc["wifiEnabled"] | true;
-    strlcpy(cfg.ssid, doc["ssid"] | "", sizeof(cfg.ssid));
-    strlcpy(cfg.wifiPassword, doc["wifiPassword"] | "", sizeof(cfg.wifiPassword));
-    cfg.workStartMin = doc["workStartMin"] | (9 * 60);
-    cfg.workEndMin = doc["workEndMin"] | (18 * 60);
-    cfg.lateThresholdMin = doc["lateThresholdMin"] | 15;
-    cfg.checkInAutoToggle = doc["checkInAutoToggle"] | true;
+    resetConfigToDefaults(cfg);
+    parseConfigFromJson(cfg, doc.as<JsonObjectConst>());
+
+    const uint32_t loadedVer = cfg.configVersion;
+    bool needsSave = (loadedVer < CONFIG_VERSION_CURRENT);
+
+    migrateConfig(cfg, loadedVer);
+
+    if (!validateConfig(cfg)) {
+        Serial.println("[Config] Invalid settings — restoring defaults");
+        resetConfigToDefaults(cfg);
+        needsSave = true;
+    }
+
+    if (needsSave) {
+        saveConfig(cfg);
+    }
+
     return true;
 }
 
 bool saveConfig(const AppConfig &cfg) {
     if (!s_mounted) return false;
 
+    AppConfig out = cfg;
+    if (!validateConfig(out)) {
+        return false;
+    }
+
+    out.configVersion = CONFIG_VERSION_CURRENT;
+
     JsonDocument doc;
-    doc["deviceName"] = cfg.deviceName;
-    doc["autoNtp"] = cfg.autoNtp;
-    doc["wifiEnabled"] = cfg.wifiEnabled;
-    doc["ssid"] = cfg.ssid;
-    doc["wifiPassword"] = cfg.wifiPassword;
-    doc["workStartMin"] = cfg.workStartMin;
-    doc["workEndMin"] = cfg.workEndMin;
-    doc["lateThresholdMin"] = cfg.lateThresholdMin;
-    doc["checkInAutoToggle"] = cfg.checkInAutoToggle;
+    doc["deviceName"] = out.deviceName;
+    doc["wifiSSID"] = out.wifiSSID;
+    doc["wifiPassword"] = out.wifiPassword;
+    doc["wifiEnabled"] = out.wifiEnabled;
+    doc["ntpEnabled"] = out.ntpEnabled;
+    doc["ntpServer"] = out.ntpServer;
+    doc["timezone"] = out.timezone;
+    doc["workStartHour"] = out.workStartHour;
+    doc["workStartMinute"] = out.workStartMinute;
+    doc["workEndHour"] = out.workEndHour;
+    doc["workEndMinute"] = out.workEndMinute;
+    doc["lateThresholdMinutes"] = out.lateThresholdMinutes;
+    doc["attendanceMode"] = out.attendanceMode;
+    doc["displayBrightness"] = out.displayBrightness;
+    doc["screenTimeout"] = out.screenTimeout;
+    doc["soundEnabled"] = out.soundEnabled;
+    doc["adminSessionMinutes"] = out.adminSessionMinutes;
+    doc["configVersion"] = out.configVersion;
+
     return writeJsonVerified(FILE_SETTINGS, doc);
 }
 
@@ -596,20 +749,390 @@ void updateUserSummary(uint16_t userId, const AttendanceRecord &rec) {
     writeJsonVerified(FILE_SUMMARY, doc);
 }
 
-String exportDayCSV(time_t date) {
-    String csv = "recordId,userId,checkIn,checkOut,status\n";
+time_t startOfDayTime(time_t t) {
+    if (timeStatus() == timeNotSet) return t;
+    tmElements_t te;
+    breakTime(t, te);
+    te.Hour = 0;
+    te.Minute = 0;
+    te.Second = 0;
+    return makeTime(te);
+}
 
-    AttendanceRecord recs[64];
-    const int n = loadDayRecords(date, recs, 64);
+void formatDateIso(time_t t, char *buf, size_t len) {
+    if (timeStatus() == timeNotSet || t == 0) {
+        strlcpy(buf, "1970-01-01", len);
+        return;
+    }
+    snprintf(buf, len, "%04d-%02d-%02d", year(t), month(t), day(t));
+}
+
+void formatTimeHms(time_t t, char *buf, size_t len) {
+    if (t == 0 || timeStatus() == timeNotSet) {
+        buf[0] = '\0';
+        return;
+    }
+    snprintf(buf, len, "%02d:%02d:%02d", hour(t), minute(t), second(t));
+}
+
+const char *statusLabel(uint8_t status) {
+    switch (status) {
+        case ATT_STATUS_LATE: return "Late";
+        case ATT_STATUS_ABSENT: return "Absent";
+        case ATT_STATUS_HALF_DAY: return "HalfDay";
+        default: return "Present";
+    }
+}
+
+String csvEscape(const char *field) {
+    if (!field) return "";
+    bool needQuotes = false;
+    for (const char *p = field; *p; p++) {
+        if (*p == ',' || *p == '"' || *p == '\n' || *p == '\r') {
+            needQuotes = true;
+            break;
+        }
+    }
+    if (!needQuotes) return String(field);
+
+    String out = "\"";
+    for (const char *p = field; *p; p++) {
+        if (*p == '"') out += "\"\"";
+        else out += *p;
+    }
+    out += "\"";
+    return out;
+}
+
+bool resolveUserForRecord(const AttendanceRecord &rec, User &out) {
+    if (loadUser(rec.userId, out)) return true;
+    if (loadUserByFingerprint(rec.userId, out)) return true;
+    out = User{};
+    out.id = rec.userId;
+    out.fingerprintId = rec.userId;
+    snprintf(out.name, sizeof(out.name), "User %u", rec.userId);
+    return false;
+}
+
+int recordDurationMin(const AttendanceRecord &rec) {
+    if (rec.checkInTime == 0 || rec.checkOutTime == 0 || rec.checkOutTime <= rec.checkInTime) {
+        return 0;
+    }
+    return (int)((rec.checkOutTime - rec.checkInTime) / 60);
+}
+
+String buildRecordCsvRow(const AttendanceRecord &rec, time_t date) {
+    User u;
+    resolveUserForRecord(rec, u);
+
+    char dateBuf[12];
+    char inBuf[12];
+    char outBuf[12];
+    formatDateIso(date, dateBuf, sizeof(dateBuf));
+    formatTimeHms(rec.checkInTime ? (time_t)rec.checkInTime : 0, inBuf, sizeof(inBuf));
+    formatTimeHms(rec.checkOutTime ? (time_t)rec.checkOutTime : 0, outBuf, sizeof(outBuf));
+
+    char idBuf[8];
+    snprintf(idBuf, sizeof(idBuf), "%03u", u.id ? u.id : rec.userId);
+
+    String row = idBuf;
+    row += ",";
+    row += csvEscape(u.name);
+    row += ",";
+    row += csvEscape(u.department);
+    row += ",";
+    row += dateBuf;
+    row += ",";
+    row += (inBuf[0] ? inBuf : "");
+    row += ",";
+    row += (outBuf[0] ? outBuf : "");
+    row += ",";
+    row += String(recordDurationMin(rec));
+    row += ",";
+    row += statusLabel(rec.status);
+    row += "\n";
+    return row;
+}
+
+struct ExportRow {
+    AttendanceRecord rec;
+    time_t date;
+    uint32_t sortKey;
+};
+
+void sortExportRows(ExportRow *rows, int count) {
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            const bool swap = (rows[j].date < rows[i].date) ||
+                            (rows[j].date == rows[i].date && rows[j].sortKey < rows[i].sortKey);
+            if (swap) {
+                const ExportRow tmp = rows[i];
+                rows[i] = rows[j];
+                rows[j] = tmp;
+            }
+        }
+    }
+}
+
+void pruneExportFolder() {
+    if (!s_mounted) return;
+
+    static const int MAX_KEEP = 10;
+    char paths[MAX_KEEP + 16][56];
+    int count = 0;
+
+    File dir = LittleFS.open(DIR_EXPORTS);
+    if (!dir || !dir.isDirectory()) return;
+
+    File f = dir.openNextFile();
+    while (f && count < (int)(sizeof(paths) / sizeof(paths[0]))) {
+        if (!f.isDirectory() && f.name() && f.name()[0]) {
+            strlcpy(paths[count++], f.name(), sizeof(paths[0]));
+        }
+        f.close();
+        f = dir.openNextFile();
+    }
+    dir.close();
+
+    for (int i = 0; i < count - 1; i++) {
+        for (int j = i + 1; j < count; j++) {
+            if (strcmp(paths[j], paths[i]) > 0) {
+                char tmp[56];
+                strlcpy(tmp, paths[i], sizeof(tmp));
+                strlcpy(paths[i], paths[j], sizeof(paths[j]));
+                strlcpy(paths[j], tmp, sizeof(tmp));
+            }
+        }
+    }
+
+    for (int i = MAX_KEEP; i < count; i++) {
+        LittleFS.remove(paths[i]);
+    }
+}
+
+DailyReport generateDailyReport(time_t date) {
+    DailyReport rep{};
+
+    User users[MAX_ENROLLED_FINGERS];
+    int userCount = 0;
+    loadAllUsers(users, MAX_ENROLLED_FINGERS, userCount);
+    rep.totalEnrolled = userCount;
+
+    AttendanceRecord recs[MAX_ENROLLED_FINGERS];
+    const int n = loadDayRecords(date, recs, MAX_ENROLLED_FINGERS);
+
+    bool seenUser[MAX_ENROLLED_FINGERS + 1] = {};
+    int arrivalSum = 0;
+    int arrivalCount = 0;
+    int durationSum = 0;
+    int durationCount = 0;
+
     for (int i = 0; i < n; i++) {
         const AttendanceRecord &r = recs[i];
-        csv += String(r.recordId) + ",";
-        csv += String(r.userId) + ",";
-        csv += String(r.checkInTime) + ",";
-        csv += String(r.checkOutTime) + ",";
-        csv += String(r.status) + "\n";
+        if (r.checkInTime == 0) continue;
+
+        User u;
+        const uint16_t uid = resolveUserForRecord(r, u) ? (u.id ? u.id : r.userId) : r.userId;
+        if (uid < sizeof(seenUser)) seenUser[uid] = true;
+
+        if (r.status == ATT_STATUS_LATE) {
+            rep.lateToday++;
+        } else if (r.status == ATT_STATUS_ABSENT) {
+            rep.absentToday++;
+        } else if (r.status == ATT_STATUS_PRESENT || r.status == ATT_STATUS_HALF_DAY) {
+            rep.presentToday++;
+        }
+
+        const time_t day0 = startOfDayTime((time_t)r.checkInTime);
+        arrivalSum += (int)((r.checkInTime - day0) / 60);
+        arrivalCount++;
+
+        const int dur = recordDurationMin(r);
+        if (dur > 0) {
+            durationSum += dur;
+            durationCount++;
+        }
+    }
+
+    int attendees = 0;
+    for (int i = 0; i < (int)sizeof(seenUser); i++) {
+        if (seenUser[i]) attendees++;
+    }
+    const int noShow = rep.totalEnrolled - attendees;
+    if (noShow > 0) {
+        rep.absentToday += noShow;
+    }
+
+    if (arrivalCount > 0) {
+        rep.avgArrivalMin = arrivalSum / arrivalCount;
+    }
+    if (durationCount > 0) {
+        rep.avgDurationMin = durationSum / durationCount;
+    }
+
+    return rep;
+}
+
+String exportDayCSV(time_t date) {
+    String csv = "ID,Name,Department,Date,Check-In,Check-Out,Duration(min),Status\n";
+
+    AttendanceRecord recs[MAX_ENROLLED_FINGERS];
+    const int n = loadDayRecords(date, recs, MAX_ENROLLED_FINGERS);
+    const time_t day = startOfDayTime(date);
+
+    for (int i = 0; i < n; i++) {
+        if (recs[i].checkInTime == 0 && recs[i].checkOutTime == 0) continue;
+        csv += buildRecordCsvRow(recs[i], day);
     }
     return csv;
+}
+
+String exportRangeCSV(time_t startDate, time_t endDate) {
+    String csv = "ID,Name,Department,Date,Check-In,Check-Out,Duration(min),Status\n";
+
+    constexpr int MAX_ROWS = 200;
+    ExportRow rows[MAX_ROWS];
+    int rowCount = 0;
+
+    time_t start = startOfDayTime(startDate);
+    time_t end = startOfDayTime(endDate);
+    if (end < start) {
+        const time_t tmp = start;
+        start = end;
+        end = tmp;
+    }
+
+    for (time_t d = start; d <= end && rowCount < MAX_ROWS; d += 86400) {
+        AttendanceRecord recs[48];
+        const int n = loadDayRecords(d, recs, 48);
+        for (int i = 0; i < n && rowCount < MAX_ROWS; i++) {
+            if (recs[i].checkInTime == 0 && recs[i].checkOutTime == 0) continue;
+            rows[rowCount].rec = recs[i];
+            rows[rowCount].date = d;
+            rows[rowCount].sortKey = recs[i].checkInTime ? recs[i].checkInTime : recs[i].checkOutTime;
+            rowCount++;
+        }
+    }
+
+    sortExportRows(rows, rowCount);
+
+    for (int i = 0; i < rowCount; i++) {
+        csv += buildRecordCsvRow(rows[i].rec, rows[i].date);
+    }
+    return csv;
+}
+
+String exportUserSummaryCSV(time_t startDate, time_t endDate) {
+    String csv =
+        "ID,Name,Department,TotalDays,Present,Late,Absent,AvgCheckIn,AvgDuration(min)\n";
+
+    User users[MAX_ENROLLED_FINGERS];
+    int userCount = 0;
+    loadAllUsers(users, MAX_ENROLLED_FINGERS, userCount);
+
+    time_t start = startOfDayTime(startDate);
+    time_t end = startOfDayTime(endDate);
+    if (end < start) {
+        const time_t tmp = start;
+        start = end;
+        end = tmp;
+    }
+
+    for (int u = 0; u < userCount; u++) {
+        const User &user = users[u];
+        const uint16_t uid = user.id ? user.id : user.fingerprintId;
+
+        int days = 0;
+        int present = 0;
+        int late = 0;
+        int absent = 0;
+        int arrivalSum = 0;
+        int arrivalCount = 0;
+        int durationSum = 0;
+        int durationCount = 0;
+
+        bool dayHit[400] = {};
+        const int maxDays = min(399, (int)((end - start) / 86400));
+
+        for (time_t d = start; d <= end; d += 86400) {
+            AttendanceRecord recs[16];
+            const int n = loadDayRecords(d, recs, 16);
+            const int dayIdx = (int)((d - start) / 86400);
+
+            for (int i = 0; i < n; i++) {
+                if (recs[i].userId != uid && recs[i].userId != user.fingerprintId) continue;
+
+                if (dayIdx >= 0 && dayIdx <= maxDays && !dayHit[dayIdx]) {
+                    dayHit[dayIdx] = true;
+                    days++;
+                }
+
+                if (recs[i].status == ATT_STATUS_LATE) late++;
+                else if (recs[i].status == ATT_STATUS_ABSENT) absent++;
+                else present++;
+
+                if (recs[i].checkInTime > 0) {
+                    const time_t day0 = startOfDayTime((time_t)recs[i].checkInTime);
+                    arrivalSum += (int)((recs[i].checkInTime - day0) / 60);
+                    arrivalCount++;
+                }
+                const int dur = recordDurationMin(recs[i]);
+                if (dur > 0) {
+                    durationSum += dur;
+                    durationCount++;
+                }
+            }
+        }
+
+        if (days == 0) continue;
+
+        char idBuf[8];
+        char avgIn[12] = "";
+        snprintf(idBuf, sizeof(idBuf), "%03u", uid);
+
+        if (arrivalCount > 0) {
+            const int avg = arrivalSum / arrivalCount;
+            snprintf(avgIn, sizeof(avgIn), "%02d:%02d:%02d", avg / 60, avg % 60, 0);
+        }
+
+        csv += idBuf;
+        csv += ",";
+        csv += csvEscape(user.name);
+        csv += ",";
+        csv += csvEscape(user.department);
+        csv += ",";
+        csv += String(days);
+        csv += ",";
+        csv += String(present);
+        csv += ",";
+        csv += String(late);
+        csv += ",";
+        csv += String(absent);
+        csv += ",";
+        csv += avgIn;
+        csv += ",";
+        csv += String(durationCount > 0 ? durationSum / durationCount : 0);
+        csv += "\n";
+    }
+
+    return csv;
+}
+
+bool saveExportToFS(const String &csv, const char *filename) {
+    if (!s_mounted || !filename || !filename[0]) return false;
+    if (!ensureDir(DIR_EXPORTS)) return false;
+
+    char path[72];
+    snprintf(path, sizeof(path), "%s/%s", DIR_EXPORTS, filename);
+
+    const size_t len = csv.length();
+    if (len == 0) return false;
+
+    const bool ok = writeFileVerified(path, (const uint8_t *)csv.c_str(), len);
+    if (ok) {
+        pruneExportFolder();
+    }
+    return ok;
 }
 
 size_t getUsedBytes() {
