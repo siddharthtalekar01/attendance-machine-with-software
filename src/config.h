@@ -10,7 +10,7 @@
 
 // Set to 1 to run RGB fill test on boot and halt (verify display, then set to 0)
 #ifndef RUN_DISPLAY_TEST
-#define RUN_DISPLAY_TEST 1
+#define RUN_DISPLAY_TEST 0
 #endif
 
 constexpr uint16_t SCREEN_WIDTH  = 240;
@@ -63,21 +63,32 @@ constexpr uint8_t MAX_ENROLLED_FINGERS = 50;
 constexpr uint8_t MAX_NAME_LEN         = 32;
 
 constexpr const char *STORAGE_MOUNT = "/littlefs";
-constexpr const char *USERS_FILE    = "/users.json";
-constexpr const char *LOG_FILE      = "/attendance.json";
+/** @deprecated Legacy paths — use storage.h API (/users/index.json, /records/). */
+constexpr const char *USERS_FILE = "/users.json";
+constexpr const char *LOG_FILE   = "/attendance.json";
 
 constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
 constexpr int      NTP_TIMEZONE_OFFSET_SEC = 0;
 constexpr unsigned long NTP_UPDATE_INTERVAL_MS = 600000;
 
+// Splash / boot animation (millis timelines)
+constexpr uint32_t SPLASH_ICON_MS       = 600;
+constexpr uint32_t SPLASH_TYPE_START_MS = 600;
+constexpr uint32_t SPLASH_SYSTEM_MS     = 1000;
+constexpr uint32_t SPLASH_LINE_MS       = 1500;
+constexpr uint32_t SPLASH_PROGRESS_MS   = 2000;
+constexpr uint32_t SPLASH_SLIDE_START_MS = 3500;
+constexpr uint32_t SPLASH_SLIDE_MS      = 400;
+constexpr uint32_t HOME_BOOT_CARD_MS    = 2000;
+
 // Application state machine timings (non-blocking; millis() only in loop)
-constexpr uint32_t BOOT_ANIM_MS        = 2000;
+constexpr uint32_t BOOT_ANIM_MS        = SPLASH_SLIDE_START_MS + SPLASH_SLIDE_MS;
 constexpr uint32_t SCAN_RESULT_MS      = 3000;
 constexpr uint32_t ADMIN_HOLD_MS       = 2000;
 constexpr uint32_t SCAN_POLL_MS        = 80;
-constexpr const char *ADMIN_PIN_DEFAULT = "1234";
 
 // Dark dashboard theme
+constexpr uint16_t BG_SECONDARY        = 0x4208;
 constexpr uint16_t COLOR_BG_DARK    = 0x0841;
 constexpr uint16_t COLOR_BG         = COLOR_BG_DARK;
 constexpr uint16_t COLOR_PRIMARY    = 0x2196;

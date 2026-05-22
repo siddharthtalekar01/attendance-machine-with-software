@@ -5,6 +5,7 @@
 #include <cstring>
 
 #include "display.h"
+#include "admin_auth.h"
 #include "fingerprint.h"
 #include "ui_screens.h"
 
@@ -489,6 +490,10 @@ bool handleUserListTouch(TouchPoint tp) {
                 return true;
             }
             if (isTouchInRect(tp, 126, panelY + 185, 90, 32)) {
+                if (!adminIsSessionActive()) {
+                    adminRequestAccess(STATE_USERS);
+                    return true;
+                }
                 usersDeleteByIndex(gUsersUi.popupUser);
                 gUsersUi.popupVisible = false;
                 gUsersUi.popupConfirmDelete = false;
@@ -512,7 +517,7 @@ bool handleUserListTouch(TouchPoint tp) {
         }
         if (isTouchInRect(tp, 20, panelY + 165, SCREEN_WIDTH - 40, 32)) {
             gUsersUi.popupVisible = false;
-            gUi.setScreen(AppScreen::Enroll);
+            adminRequestAccess(STATE_ENROLL_INFO);
             return true;
         }
         if (tp.y < panelY) {
@@ -527,12 +532,12 @@ bool handleUserListTouch(TouchPoint tp) {
     if (handleKeyboardTap(tp.x, tp.y)) return true;
 
     if (isTouchInRect(tp, 0, 0, 44, USR_HEADER_H)) {
-        gUi.setScreen(AppScreen::Settings);
+        adminRequestAccess(STATE_SETTINGS);
         return true;
     }
 
     if (isTouchInRect(tp, SCREEN_WIDTH - 40, 0, 40, USR_HEADER_H)) {
-        gUi.setScreen(AppScreen::Enroll);
+        adminRequestAccess(STATE_ENROLL_INFO);
         return true;
     }
 

@@ -29,6 +29,7 @@ enum class SettingRowId : int8_t {
     DeleteAllUsers,
     ExportData,
     ClearRecords,
+    StorageUsage,
     FactoryReset,
 };
 

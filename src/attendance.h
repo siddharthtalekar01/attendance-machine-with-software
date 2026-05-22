@@ -4,33 +4,7 @@
 #include <time.h>
 
 #include "config.h"
-
-// -----------------------------------------------------------------------------
-// Core domain types (attendance business layer)
-// -----------------------------------------------------------------------------
-
-struct User {
-    uint16_t fingerprintId = 0;
-    char name[32] = {};
-    char department[24] = {};
-    uint8_t avatarColorIndex = 0;
-    uint32_t enrolledAt = 0;
-};
-
-enum AttendanceStatus : uint8_t {
-    ATT_STATUS_PRESENT = 0,
-    ATT_STATUS_LATE = 1,
-    ATT_STATUS_ABSENT = 2,
-    ATT_STATUS_HALF_DAY = 3,
-};
-
-struct AttendanceRecord {
-    uint32_t recordId = 0;
-    uint16_t userId = 0;
-    uint32_t checkInTime = 0;
-    uint32_t checkOutTime = 0;
-    uint8_t status = ATT_STATUS_PRESENT;
-};
+#include "storage.h"
 
 enum ScanResultType : uint8_t {
     CHECKIN_OK = 0,
@@ -53,7 +27,6 @@ constexpr int ATT_MAX_DAILY_RECORDS = MAX_ENROLLED_FINGERS;
 constexpr int ATT_HALF_DAY_MINUTES = 4 * 60;
 constexpr int ATT_DUPLICATE_IN_SEC = 300;
 
-// Last scan outcome (for UI / logging)
 extern ScanResult gLastScanResult;
 
 void attendanceBegin();
@@ -68,10 +41,6 @@ AttendanceRecord *getTodayRecord(uint16_t userId);
 void midnightReset();
 
 const char *scanResultTypeString(ScanResultType type);
-
-// -----------------------------------------------------------------------------
-// UI bridge (fingerprint scan flow)
-// -----------------------------------------------------------------------------
 
 struct ScanOutcome {
     bool success = false;

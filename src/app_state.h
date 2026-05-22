@@ -28,6 +28,5 @@ enum AdminTarget : uint8_t {
 };
 
 extern AppState currentState;
-extern bool gAdminUnlocked;
 
 void changeState(AppState next);

@@ -10,18 +10,69 @@ bool WiFiManagerService::begin(const char *ssid, const char *password) {
     return true;
 }
 
-bool WiFiManagerService::connect(uint32_t timeoutMs) {
-    const uint32_t start = millis();
-    while (WiFi.status() != WL_CONNECTED && millis() - start < timeoutMs) {
-        delay(250);
-    }
-    if (WiFi.status() != WL_CONNECTED) {
-        strlcpy(_lastError, "WiFi connect timeout", sizeof(_lastError));
-        return false;
-    }
+void WiFiManagerService::connectBegin(uint32_t timeoutMs) {
+    _connecting = true;
+    _connectOk = false;
+    _connectStartMs = millis();
+    _connectTimeoutMs = timeoutMs;
     _lastError[0] = '\0';
-    syncTime();
-    return true;
+}
+
+bool WiFiManagerService::connectPoll() {
+    if (!_connecting) return true;
+
+    if (WiFi.status() == WL_CONNECTED) {
+        _connecting = false;
+        _connectOk = true;
+        _lastError[0] = '\0';
+        return true;
+    }
+
+    if (millis() - _connectStartMs >= _connectTimeoutMs) {
+        _connecting = false;
+        _connectOk = false;
+        strlcpy(_lastError, "WiFi connect timeout", sizeof(_lastError));
+        return true;
+    }
+
+    return false;
+}
+
+bool WiFiManagerService::connect(uint32_t timeoutMs) {
+    connectBegin(timeoutMs);
+    while (!connectPoll()) {
+        delay(50);
+    }
+    if (_connectOk) {
+        syncTime();
+    }
+    return _connectOk;
+}
+
+void WiFiManagerService::ntpSyncBegin() {
+    _ntpSyncing = true;
+    _ntpOk = false;
+    _ntpStartMs = millis();
+    _ntp.begin();
+}
+
+bool WiFiManagerService::ntpSyncPoll() {
+    if (!_ntpSyncing) return true;
+
+    if (_ntp.update()) {
+        setTime(_ntp.getEpochTime());
+        _ntpSyncing = false;
+        _ntpOk = true;
+        return true;
+    }
+
+    if (millis() - _ntpStartMs >= 8000) {
+        _ntpSyncing = false;
+        _ntpOk = false;
+        return true;
+    }
+
+    return false;
 }
 
 bool WiFiManagerService::isConnected() const {

@@ -10,6 +10,7 @@
 #include "fingerprint.h"
 #include "storage.h"
 #include "wifi_manager.h"
+#include "admin_auth.h"
 #include "ui_screens.h"
 #include "users_ui.h"
 
@@ -106,6 +107,7 @@ void rebuildLayout() {
     y += SET_SECTION_H;
     addRow(SettingRowId::ExportData, y);
     addRow(SettingRowId::ClearRecords, y);
+    addRow(SettingRowId::StorageUsage, y);
     addRow(SettingRowId::FactoryReset, y);
 
     gSettingsUi.totalContentHeight = y + 12;
@@ -217,6 +219,15 @@ void getRowDisplay(SettingRowId id, char *value, size_t vlen, bool &toggleOn, bo
             danger = true;
             type = SettingRowType::Text;
             break;
+        case SettingRowId::StorageUsage: {
+            *icon = "FS";
+            const size_t used = getUsedBytes();
+            const size_t total = getTotalBytes();
+            snprintf(value, vlen, "%u/%u KB (%d%%)", (unsigned)(used / 1024),
+                     (unsigned)(total / 1024), getUsedPercent());
+            type = SettingRowType::Badge;
+            break;
+        }
         case SettingRowId::FactoryReset:
             *icon = "FR";
             strlcpy(value, "Confirm", vlen);
@@ -246,6 +257,7 @@ const char *rowLabel(SettingRowId id) {
         case SettingRowId::DeleteAllUsers: return "Delete All Users";
         case SettingRowId::ExportData: return "Export via WiFi";
         case SettingRowId::ClearRecords: return "Clear All Records";
+        case SettingRowId::StorageUsage: return "Storage Used";
         case SettingRowId::FactoryReset: return "Factory Reset";
         default: return "";
     }
@@ -329,7 +341,7 @@ void renderSettingsList() {
     section("Data");
     for (int i = 0; i < 3; i++) {
         const SettingRowId ids[] = {SettingRowId::ExportData, SettingRowId::ClearRecords,
-                                    SettingRowId::FactoryReset};
+                                    SettingRowId::StorageUsage, SettingRowId::FactoryReset};
         char val[32];
         bool toggle, danger;
         SettingRowType type;
@@ -574,17 +586,27 @@ static void applyRowAction(SettingRowId id, int tapX) {
             drawSettingsScreen();
             return;
         case SettingRowId::ViewUsers:
-            gUi.setScreen(AppScreen::UserList);
+            if (!adminIsSessionActive()) {
+                adminRequestAccess(STATE_USERS);
+            } else {
+                changeState(STATE_USERS);
+            }
             return;
         case SettingRowId::DeleteAllUsers:
             gSettingsUi.dialog = SettingsUiState::Dialog::ConfirmDeleteUsers;
             drawSettingsScreen();
             return;
-        case SettingRowId::ExportData:
-            Serial.println("[Settings] Export via WiFi (stub)");
+        case SettingRowId::ExportData: {
+            const String csv = exportDayCSV(now());
+            Serial.println("[Settings] CSV export (today):");
+            Serial.println(csv);
             break;
+        }
         case SettingRowId::ClearRecords:
             gSettingsUi.dialog = SettingsUiState::Dialog::ConfirmClearRecords;
+            drawSettingsScreen();
+            return;
+        case SettingRowId::StorageUsage:
             drawSettingsScreen();
             return;
         case SettingRowId::FactoryReset:
@@ -634,21 +656,38 @@ bool settingsHandleDialogTap(int x, int y) {
             doc["users"] = JsonArray();
             gStorage.saveUsers(doc);
         } else if (d == SettingsUiState::Dialog::ConfirmClearRecords2) {
-            File f = LittleFS.open(LOG_FILE, FILE_WRITE);
-            if (f) {
-                f.print("[]");
-                f.close();
+            File root = LittleFS.open("/records");
+            if (root && root.isDirectory()) {
+                File f = root.openNextFile();
+                while (f) {
+                    if (f.name() && f.name()[0]) {
+                        LittleFS.remove(f.name());
+                    }
+                    f.close();
+                    f = root.openNextFile();
+                }
+                root.close();
+            }
+            JsonDocument sum;
+            sum["users"].to<JsonArray>();
+            File sf = LittleFS.open("/records/summary.json", FILE_WRITE);
+            if (sf) {
+                serializeJson(sum, sf);
+                sf.close();
+            }
+            if (LittleFS.exists("/attendance.json")) {
+                File lf = LittleFS.open("/attendance.json", FILE_WRITE);
+                if (lf) {
+                    lf.print("[]");
+                    lf.close();
+                }
             }
         } else if (d == SettingsUiState::Dialog::ConfirmFactoryReset2) {
             fingerprintDeleteAll();
             JsonDocument udoc;
             udoc["users"] = JsonArray();
             gStorage.saveUsers(udoc);
-            File f = LittleFS.open(LOG_FILE, FILE_WRITE);
-            if (f) {
-                f.print("[]");
-                f.close();
-            }
+            adminResetPinToDefault();
             gSettingsUi.settings = AppSettings{};
             settingsSave(gSettingsUi.settings);
         }

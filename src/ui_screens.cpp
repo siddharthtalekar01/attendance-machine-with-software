@@ -5,7 +5,9 @@
 #include <TimeLib.h>
 #include <cstring>
 
+#include "admin_auth.h"
 #include "app_state.h"
+#include "storage.h"
 
 UiScreens gUi;
 
@@ -130,9 +132,15 @@ void UiScreens::setScreen(AppScreen screen) {
         case AppScreen::Splash: changeState(STATE_BOOT); break;
         case AppScreen::Home: changeState(STATE_HOME); break;
         case AppScreen::Scan: changeState(STATE_SCANNING); break;
-        case AppScreen::Enroll: changeState(STATE_ENROLL_INFO); break;
-        case AppScreen::Records: changeState(STATE_RECORDS); break;
-        case AppScreen::Settings: changeState(STATE_SETTINGS); break;
+        case AppScreen::Enroll:
+            adminRequestAccess(STATE_ENROLL_INFO);
+            break;
+        case AppScreen::Records:
+            changeState(STATE_RECORDS);
+            break;
+        case AppScreen::Settings:
+            adminRequestAccess(STATE_SETTINGS);
+            break;
         case AppScreen::UserList: changeState(STATE_USERS); break;
         case AppScreen::WiFiSetup: changeState(STATE_WIFI_SETUP); break;
         case AppScreen::Admin: changeState(STATE_ADMIN_AUTH); break;
@@ -147,7 +155,6 @@ void UiScreens::enterState(AppState state) {
 
     switch (state) {
         case STATE_BOOT:
-            drawSplash();
             break;
         case STATE_HOME:
             _activeNavTab = -1;
@@ -160,6 +167,10 @@ void UiScreens::enterState(AppState state) {
             drawScanResultScreen();
             break;
         case STATE_ENROLL_INFO:
+            if (!adminIsSessionActive()) {
+                adminRequestAccess(STATE_ENROLL_INFO);
+                return;
+            }
             _activeNavTab = 0;
             beginEnrollWizard();
             _enrollWizardStep = 1;
@@ -185,10 +196,18 @@ void UiScreens::enterState(AppState state) {
             drawRecords();
             break;
         case STATE_SETTINGS:
+            if (!adminIsSessionActive()) {
+                adminRequestAccess(STATE_SETTINGS);
+                return;
+            }
             _activeNavTab = 2;
             drawSettings();
             break;
         case STATE_USERS:
+            if (!adminIsSessionActive()) {
+                adminRequestAccess(STATE_USERS);
+                return;
+            }
             gUsersUi.scrollY = 0;
             gUsersUi.velocity = 0;
             gUsersUi.swipedRow = -1;
@@ -203,7 +222,7 @@ void UiScreens::enterState(AppState state) {
             drawWifiSetupScreen();
             break;
         case STATE_ADMIN_AUTH:
-            drawAdminAuthScreen("", false);
+            drawAdminAuthScreen();
             break;
         case STATE_ERROR:
             break;
@@ -243,6 +262,8 @@ void UiScreens::drawSplash() {
 }
 
 void UiScreens::drawHomeStatusCard() {
+    if (_bootCardActive) return;
+
     TFT_eSPI &tft = gDisplay.tft();
     const int y = HOME_STATUS_Y;
     tft.fillRect(8, y, SCREEN_WIDTH - 16, HOME_STATUS_H, COLOR_BG_DARK);
@@ -319,39 +340,109 @@ void UiScreens::drawHomeBottomNav() {
 }
 
 void UiScreens::drawHomeScreen() {
+    drawHomeScreenOffset(0);
+}
+
+void UiScreens::drawHomeScreenOffset(int yOffset) {
     TFT_eSPI &tft = gDisplay.tft();
     tft.fillScreen(COLOR_BG_DARK);
 
-    tft.fillRect(0, 0, SCREEN_WIDTH, HOME_TOP_H, 0x2104);
-    _lastClockStr[0] = '\0';
-    _lastDateStr[0] = '\0';
-    updateHomeClock();
+    const int topH = HOME_TOP_H;
+    tft.fillRect(0, yOffset, SCREEN_WIDTH, topH, 0x2104);
 
-    const int heroY = HOME_HERO_Y;
+    if (yOffset == 0) {
+        _lastClockStr[0] = '\0';
+        _lastDateStr[0] = '\0';
+        _screen = AppScreen::Home;
+        updateHomeClock();
+    } else {
+        tft.setTextFont(1);
+        tft.setTextSize(2);
+        tft.setTextColor(TEXT_SECONDARY, 0x2104);
+        tft.setTextDatum(ML_DATUM);
+        if (_lastClockStr[0]) {
+            tft.drawString(_lastClockStr, 6, yOffset + topH / 2);
+        }
+        tft.setTextDatum(TL_DATUM);
+        tft.setTextSize(1);
+    }
+
+    const int heroY = HOME_HERO_Y + yOffset;
     tft.fillRect(0, heroY, SCREEN_WIDTH, HOME_HERO_H, COLOR_BG_DARK);
 
-    drawFingerprintIcon(tft, ICON_CX, ICON_CY);
+    drawFingerprintIcon(tft, ICON_CX, ICON_CY + yOffset);
 
     tft.setTextFont(4);
     tft.setTextColor(TEXT_PRIMARY, COLOR_BG_DARK);
     tft.setTextDatum(TC_DATUM);
-    tft.drawString("Place Finger", ICON_CX, ICON_CY + 48);
+    tft.drawString("Place Finger", ICON_CX, ICON_CY + 48 + yOffset);
 
     tft.setTextFont(1);
     tft.setTextSize(1);
     tft.setTextColor(TEXT_MUTED, COLOR_BG_DARK);
-    tft.drawString("Scan to mark attendance", ICON_CX, ICON_CY + 72);
+    tft.drawString("Scan to mark attendance", ICON_CX, ICON_CY + 72 + yOffset);
     tft.setTextDatum(TL_DATUM);
 
-    drawHomeStatusCard();
-    drawHomeBottomNav();
-
-    if (!_pulseSpriteReady) {
-        _pulseSprite.setColorDepth(16);
-        _pulseSpriteReady = _pulseSprite.createSprite(PULSE_SPRITE_W, PULSE_SPRITE_H);
+    if (yOffset == 0) {
+        drawHomeStatusCard();
+        drawHomeBottomNav();
+    } else {
+        tft.fillRect(0, HOME_STATUS_Y + yOffset, SCREEN_WIDTH, HOME_STATUS_H, COLOR_BG_DARK);
+        tft.fillRect(0, HOME_NAV_Y + yOffset, SCREEN_WIDTH, HOME_NAV_H, 0x2104);
     }
-    _lastPulseMs = 0;
-    updateHomePulse();
+
+    if (yOffset == 0) {
+        if (!_pulseSpriteReady) {
+            _pulseSprite.setColorDepth(16);
+            _pulseSpriteReady = _pulseSprite.createSprite(PULSE_SPRITE_W, PULSE_SPRITE_H);
+        }
+        _lastPulseMs = 0;
+        updateHomePulse();
+    }
+}
+
+void UiScreens::beginHomeBootCard(int userCount, const char *timeStr) {
+    snprintf(_bootCardLine1, sizeof(_bootCardLine1), "%d users enrolled", userCount);
+    strlcpy(_bootCardLine2, timeStr ? timeStr : "--:--", sizeof(_bootCardLine2));
+    _bootCardStartMs = millis();
+    _bootCardActive = true;
+}
+
+void UiScreens::updateHomeBootCard() {
+    if (!_bootCardActive || _screen != AppScreen::Home) return;
+
+    const uint32_t t = millis() - _bootCardStartMs;
+    float alpha = 0.0f;
+    if (t < 400) {
+        alpha = t / 400.0f;
+    } else if (t < 1600) {
+        alpha = 1.0f;
+    } else if (t < HOME_BOOT_CARD_MS) {
+        alpha = 1.0f - (float)(t - 1600) / 400.0f;
+    } else {
+        _bootCardActive = false;
+        drawHomeStatusCard();
+        return;
+    }
+
+    TFT_eSPI &tft = gDisplay.tft();
+    const int y = HOME_STATUS_Y;
+    tft.fillRect(8, y, SCREEN_WIDTH - 16, HOME_STATUS_H, COLOR_BG_DARK);
+
+    const uint16_t cardBg = blend565(COLOR_BG_DARK, 0x2104, alpha);
+    const uint16_t txtCol = blend565(COLOR_BG_DARK, ACCENT_GREEN, alpha);
+    const uint16_t subCol = blend565(COLOR_BG_DARK, TEXT_SECONDARY, alpha);
+
+    tft.fillRoundRect(10, y + 4, SCREEN_WIDTH - 20, HOME_STATUS_H - 8, 8, cardBg);
+
+    tft.setTextFont(2);
+    tft.setTextColor(txtCol, cardBg);
+    tft.setTextDatum(MC_DATUM);
+    tft.drawString(_bootCardLine1, SCREEN_WIDTH / 2, y + HOME_STATUS_H / 2 - 8);
+    tft.setTextFont(1);
+    tft.setTextColor(subCol, cardBg);
+    tft.drawString(_bootCardLine2, SCREEN_WIDTH / 2, y + HOME_STATUS_H / 2 + 14);
+    tft.setTextDatum(TL_DATUM);
 }
 
 void UiScreens::updateHomeClock() {
@@ -427,8 +518,11 @@ void UiScreens::handleHomeTouch(const TouchPoint &tp) {
     }
 
     const int tab = homeNavTabAt(tp.x, tp.y);
-    if (tab == 0) changeState(STATE_ENROLL_INFO);
-    else if (tab == 1) changeState(STATE_RECORDS);
+    if (tab == 0) {
+        adminRequestAccess(STATE_ENROLL_INFO);
+    } else if (tab == 1) {
+        changeState(STATE_RECORDS);
+    }
     // tab 2 (Settings): short/long press handled in main.cpp
 }
 
@@ -474,116 +568,6 @@ void UiScreens::drawScanResultScreen() {
     tft.setTextColor(TEXT_MUTED, COLOR_BG_DARK);
     tft.drawString("Returning home...", SCREEN_WIDTH / 2, 240);
     tft.setTextDatum(TL_DATUM);
-}
-
-void UiScreens::drawAdminAuthScreen(const char *pinDisplay, bool pinError) {
-    TFT_eSPI &tft = gDisplay.tft();
-    gDisplay.fillScreen(COLOR_BG_DARK);
-    gDisplay.drawHeader("Admin PIN");
-
-    tft.setTextFont(1);
-    tft.setTextColor(TEXT_MUTED, COLOR_BG_DARK);
-    tft.setTextDatum(TC_DATUM);
-    tft.drawString("Hold Settings 2s to open", SCREEN_WIDTH / 2, 40);
-
-    tft.fillRoundRect(40, 58, SCREEN_WIDTH - 80, 32, 6, 0x2104);
-    tft.setTextFont(4);
-    tft.setTextColor(pinError ? STATUS_RED : TEXT_PRIMARY, 0x2104);
-    tft.drawString(pinDisplay && pinDisplay[0] ? pinDisplay : "----", SCREEN_WIDTH / 2, 74);
-
-    if (pinError) {
-        tft.setTextFont(1);
-        tft.setTextColor(STATUS_RED, COLOR_BG_DARK);
-        tft.drawString("Incorrect PIN", SCREEN_WIDTH / 2, 100);
-    }
-
-    const int keyW = 70;
-    const int keyH = 40;
-    const int startX = 15;
-    const int startY = 120;
-    const char *labels[] = {"1", "2", "3", "4", "5", "6", "7", "8", "9", "C", "0", "OK"};
-    for (int i = 0; i < 12; i++) {
-        const int col = i % 3;
-        const int row = i / 3;
-        const int x = startX + col * (keyW + 8);
-        const int y = startY + row * (keyH + 6);
-        gDisplay.drawButton(x, y, keyW, keyH, labels[i], 0x4208);
-    }
-
-    gDisplay.drawButton(20, 280, 90, 32, "Cancel", 0x4208);
-    tft.setTextDatum(TL_DATUM);
-}
-
-bool UiScreens::handleAdminAuthTouch(const TouchPoint &tp, char *pinBuf, int &pinLen, bool &submitted) {
-    submitted = false;
-    if (isTouchInRect(tp, 20, 280, 90, 32)) {
-        changeState(STATE_HOME);
-        return true;
-    }
-
-    const int keyW = 70;
-    const int keyH = 40;
-    const int startX = 15;
-    const int startY = 120;
-    const char keys[] = {'1', '2', '3', '4', '5', '6', '7', '8', '9', 'C', '0', 'K'};
-    for (int i = 0; i < 12; i++) {
-        const int col = i % 3;
-        const int row = i / 3;
-        const int x = startX + col * (keyW + 8);
-        const int y = startY + row * (keyH + 6);
-        if (!isTouchInRect(tp, x, y, keyW, keyH)) continue;
-
-        if (keys[i] == 'C') {
-            pinLen = 0;
-            pinBuf[0] = '\0';
-            drawAdminAuthScreen("", false);
-            return true;
-        }
-        if (keys[i] == 'K') {
-            submitted = true;
-            return true;
-        }
-        if (pinLen < 6) {
-            pinBuf[pinLen++] = keys[i];
-            pinBuf[pinLen] = '\0';
-            drawAdminAuthScreen(pinBuf, false);
-        }
-        return true;
-    }
-    return false;
-}
-
-void UiScreens::drawAdminMenuScreen() {
-    gDisplay.fillScreen(COLOR_BG_DARK);
-    gDisplay.drawHeader("Admin");
-    gDisplay.drawCenteredText(50, "Select destination", 1, TEXT_MUTED);
-    gDisplay.drawButton(20, 90, SCREEN_WIDTH - 40, 44, "Settings", ACCENT_BLUE);
-    gDisplay.drawButton(20, 148, SCREEN_WIDTH - 40, 44, "Users", ACCENT_BLUE);
-    gDisplay.drawButton(20, 206, SCREEN_WIDTH - 40, 44, "Records", ACCENT_BLUE);
-    gDisplay.drawButton(20, 280, 90, 32, "Home", 0x4208);
-}
-
-bool UiScreens::handleAdminMenuTouch(const TouchPoint &tp) {
-    if (isTouchInRect(tp, 20, 90, SCREEN_WIDTH - 40, 44)) {
-        gAdminUnlocked = true;
-        changeState(STATE_SETTINGS);
-        return true;
-    }
-    if (isTouchInRect(tp, 20, 148, SCREEN_WIDTH - 40, 44)) {
-        gAdminUnlocked = true;
-        changeState(STATE_USERS);
-        return true;
-    }
-    if (isTouchInRect(tp, 20, 206, SCREEN_WIDTH - 40, 44)) {
-        gAdminUnlocked = true;
-        changeState(STATE_RECORDS);
-        return true;
-    }
-    if (isTouchInRect(tp, 20, 280, 90, 32)) {
-        changeState(STATE_HOME);
-        return true;
-    }
-    return false;
 }
 
 void UiScreens::drawWifiSetupScreen() {
@@ -809,11 +793,13 @@ void UiScreens::tickEnrollFingerprint() {
     if (_enrollSuccess) {
         _enrollStatusColor = STATUS_GREEN;
         strlcpy(_enrollStatus, "Success!", sizeof(_enrollStatus));
-        UserRecord user;
-        user.fingerId = static_cast<uint8_t>(_enrollId);
+        User user;
+        user.fingerprintId = _enrollId;
         strlcpy(user.name, _enrollName, sizeof(user.name));
         strlcpy(user.department, enrollDepartmentName(_enrollDeptIdx), sizeof(user.department));
-        gStorage.upsertUser(user);
+        user.colorIndex = static_cast<uint8_t>(_enrollDeptIdx);
+        user.enrolledAt = (uint32_t)now();
+        saveUser(user);
     } else {
         _enrollStatusColor = STATUS_RED;
         snprintf(_enrollStatus, sizeof(_enrollStatus), "%s", fingerprintErrorString(r));
@@ -971,6 +957,7 @@ void UiScreens::updateState(AppState state) {
             updateHomeClock();
         }
         updateHomePulse();
+        updateHomeBootCard();
     }
 
     if (state == STATE_ENROLL_SCAN1 || state == STATE_ENROLL_SCAN2) {
@@ -1068,7 +1055,7 @@ bool UiScreens::handleTouch(AppState state, const TouchPoint &tp) {
             return true;
         case STATE_WIFI_SETUP:
             if (isTouchInRect(tp, 20, 260, 90, 40)) {
-                changeState(STATE_SETTINGS);
+                adminRequestAccess(STATE_SETTINGS);
                 return true;
             }
             return true;

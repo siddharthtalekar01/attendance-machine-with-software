@@ -28,10 +28,9 @@ public:
     void enrollCancelPoll() { _enrollPollActive = false; }
     int homeNavTabAt(int16_t x, int16_t y) const;
     void drawErrorScreen(const char *title, const char *body);
-    void drawAdminAuthScreen(const char *pinDisplay, bool pinError);
-    bool handleAdminAuthTouch(const TouchPoint &tp, char *pinBuf, int &pinLen, bool &submitted);
-    void drawAdminMenuScreen();
-    bool handleAdminMenuTouch(const TouchPoint &tp);
+    void drawHomeScreenOffset(int yOffset = 0);
+    void beginHomeBootCard(int userCount, const char *timeStr);
+    void updateHomeBootCard();
 
 private:
     AppScreen _screen = AppScreen::Splash;
@@ -97,6 +96,11 @@ private:
     bool _recordsDragging = false;
     int _recordsLastX = 0;
     int _recordsLastY = 0;
+
+    bool _bootCardActive = false;
+    uint32_t _bootCardStartMs = 0;
+    char _bootCardLine1[32] = {};
+    char _bootCardLine2[24] = {};
 
     bool hitButton(int16_t tx, int16_t ty, int16_t x, int16_t y, int16_t w, int16_t h);
     void handleHomeTouch(const TouchPoint &tp);
