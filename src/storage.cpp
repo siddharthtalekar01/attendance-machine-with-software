@@ -1,4 +1,6 @@
 #include "storage.h"
+#include <TimeLib.h>
+#include <cstring>
 
 StorageManager gStorage;
 
@@ -103,5 +105,56 @@ bool StorageManager::appendAttendance(const AttendanceRecord &rec) {
     if (!f) return false;
     serializeJson(doc, f);
     f.close();
+    return true;
+}
+
+static bool isSameDay(time_t ts) {
+    if (timeStatus() == timeNotSet) return true;
+    return day(ts) == day() && month(ts) == month() && year(ts) == year();
+}
+
+bool StorageManager::getLastScanToday(LastScanInfo &out) {
+    out = LastScanInfo{};
+    if (!_mounted || !LittleFS.exists(LOG_FILE)) return false;
+
+    File f = LittleFS.open(LOG_FILE, FILE_READ);
+    if (!f) return false;
+
+    JsonDocument doc;
+    if (deserializeJson(doc, f)) {
+        f.close();
+        return false;
+    }
+    f.close();
+
+    if (!doc.is<JsonArray>()) return false;
+
+    time_t bestTs = 0;
+    uint8_t bestFinger = 0;
+    bool bestIn = true;
+
+    for (JsonObject entry : doc.as<JsonArray>()) {
+        const time_t ts = entry["ts"] | 0;
+        if (ts == 0 || !isSameDay(ts)) continue;
+        if (ts >= bestTs) {
+            bestTs = ts;
+            bestFinger = entry["fingerId"] | 0;
+            bestIn = entry["in"] | true;
+        }
+    }
+
+    if (bestTs == 0) return false;
+
+    UserRecord user;
+    if (!findUserByFingerId(bestFinger, user)) {
+        snprintf(out.name, sizeof(out.name), "ID %u", bestFinger);
+    } else {
+        strlcpy(out.name, user.name, sizeof(out.name));
+    }
+
+    snprintf(out.timeStr, sizeof(out.timeStr), "%02d:%02d:%02d",
+             hour(bestTs), minute(bestTs), second(bestTs));
+    out.checkIn = bestIn;
+    out.found = true;
     return true;
 }

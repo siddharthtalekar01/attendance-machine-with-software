@@ -70,19 +70,38 @@ constexpr uint32_t WIFI_CONNECT_TIMEOUT_MS = 30000;
 constexpr int      NTP_TIMEZONE_OFFSET_SEC = 0;
 constexpr unsigned long NTP_UPDATE_INTERVAL_MS = 600000;
 
-constexpr uint16_t COLOR_BG       = 0x1082;
-constexpr uint16_t COLOR_PRIMARY  = 0x2196;
-constexpr uint16_t COLOR_ACCENT   = 0x07E0;
-constexpr uint16_t COLOR_TEXT     = 0xFFFF;
-constexpr uint16_t COLOR_TEXT_DIM = 0xC618;
-constexpr uint16_t COLOR_ERROR    = 0xF800;
-constexpr uint16_t COLOR_SUCCESS  = 0x07E0;
+// Dark dashboard theme
+constexpr uint16_t COLOR_BG_DARK    = 0x0841;
+constexpr uint16_t COLOR_BG         = COLOR_BG_DARK;
+constexpr uint16_t COLOR_PRIMARY    = 0x2196;
+constexpr uint16_t COLOR_ACCENT     = 0x07E0;
+constexpr uint16_t COLOR_TEXT       = 0xFFFF;
+constexpr uint16_t COLOR_TEXT_DIM   = 0xC618;
+constexpr uint16_t COLOR_ERROR      = 0xF800;
+constexpr uint16_t COLOR_SUCCESS    = 0x07E0;
+
+constexpr uint16_t TEXT_SECONDARY   = 0x9CD3;
+constexpr uint16_t TEXT_PRIMARY    = 0xFFFF;
+constexpr uint16_t TEXT_MUTED      = 0x632C;
+constexpr uint16_t ACCENT_GREEN    = 0x07E0;
+constexpr uint16_t ACCENT_BLUE     = 0x3A6A;
+
+constexpr int HOME_TOP_H      = 24;
+constexpr int HOME_HERO_Y     = 24;
+constexpr int HOME_HERO_H     = 136;
+constexpr int HOME_STATUS_Y   = 160;
+constexpr int HOME_STATUS_H   = 70;
+constexpr int HOME_NAV_Y      = 230;
+constexpr int HOME_NAV_H      = 90;
+constexpr int HOME_PULSE_MS   = 50;
+constexpr int HOME_CLOCK_MS   = 1000;
 
 enum class AppScreen : uint8_t {
     Splash,
     Home,
     Scan,
     Enroll,
+    Records,
     Admin,
     Settings,
     WiFiSetup,

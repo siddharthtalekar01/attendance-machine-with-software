@@ -13,6 +13,8 @@ public:
     bool isConnected() const;
     void syncTime();
     String formattedTime();
+    String formattedTimeHHMM();
+    String formattedDate();
 
     const char *lastError() const { return _lastError; }
 

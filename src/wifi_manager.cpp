@@ -42,3 +42,24 @@ String WiFiManagerService::formattedTime() {
     snprintf(buf, sizeof(buf), "%02d:%02d:%02d", hour(), minute(), second());
     return String(buf);
 }
+
+String WiFiManagerService::formattedTimeHHMM() {
+    _ntp.update();
+    if (timeStatus() == timeNotSet) return "--:--";
+    char buf[8];
+    snprintf(buf, sizeof(buf), "%02d:%02d", hour(), minute());
+    return String(buf);
+}
+
+String WiFiManagerService::formattedDate() {
+    _ntp.update();
+    if (timeStatus() == timeNotSet) return "-- ---";
+    static const char *months[] = {
+        "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+        "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+    };
+    char buf[12];
+    const int m = month();
+    snprintf(buf, sizeof(buf), "%02d %s", day(), (m >= 1 && m <= 12) ? months[m - 1] : "---");
+    return String(buf);
+}
